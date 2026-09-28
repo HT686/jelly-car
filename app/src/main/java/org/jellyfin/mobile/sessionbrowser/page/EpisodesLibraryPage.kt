@@ -1,5 +1,6 @@
 package org.jellyfin.mobile.sessionbrowser.page
 
+import org.jellyfin.mobile.R
 import org.jellyfin.mobile.sessionbrowser.LibraryItemAction
 import org.jellyfin.mobile.sessionbrowser.LibraryPageElement
 import org.jellyfin.mobile.sessionbrowser.LibraryRoute
@@ -19,11 +20,17 @@ val EpisodesLibraryPage = { api: ApiClient ->
             limit = limit,
         )
 
-        result.items.map {
+        result.items.map { episode ->
+            val epPrefix = episode.indexNumber?.let { num -> "Folge $num: " } ?: ""
+            val epTitle = epPrefix + (episode.name ?: "Episode")
             LibraryPageElement.baseItem(
                 api = api,
-                item = it,
-                action = LibraryItemAction.Play(it),
+                item = episode,
+                title = epTitle,
+                artist = episode.seriesName,
+                album = episode.seasonName,
+                iconRes = R.drawable.ic_tv_series,
+                action = LibraryItemAction.Play(episode),
             )
         }
     }

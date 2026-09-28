@@ -34,7 +34,14 @@ import org.jellyfin.mobile.sessionbrowser.page.EpisodesLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.FavoritesLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.GenreLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.GenresLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.AllAlbumsLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.AllArtistsLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.AllMoviesLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.AllSongsLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.AllTvShowsLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.LiveTvLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.MoviesLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.MusicOverviewLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.PlaylistLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.PlaylistsLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.RecentLibraryPage
@@ -86,6 +93,13 @@ class SessionBrowserCallback(
         SeasonsLibraryPage(api),
         EpisodesLibraryPage(api),
         VideosLibraryPage(api),
+        MusicOverviewLibraryPage,
+        AllArtistsLibraryPage(api),
+        AllAlbumsLibraryPage(api),
+        AllSongsLibraryPage(api),
+        AllTvShowsLibraryPage(api),
+        AllMoviesLibraryPage(api),
+        LiveTvLibraryPage(api),
     )
 
     private val LibraryRoute.page get() = pages.firstOrNull { page -> page.route == this::class }
@@ -219,7 +233,6 @@ class SessionBrowserCallback(
     ): ListenableFuture<LibraryResult<MediaItem>> = CoroutineScope(Dispatchers.IO).future {
         val route = when {
             params?.isRecent == true -> LibraryRoute.Recent()
-            params?.isSuggested == true -> LibraryRoute.Suggested
             else -> LibraryRoute.Root
         }
 

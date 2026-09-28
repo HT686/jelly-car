@@ -145,7 +145,7 @@ class CarMainScreen(
         )
 
         // 3. Schnellzugriff: Serien
-        val seriesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.app_logo)).build()
+        val seriesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_tv_series)).build()
         listBuilder.addItem(
             Row.Builder()
                 .setTitle("Serien")

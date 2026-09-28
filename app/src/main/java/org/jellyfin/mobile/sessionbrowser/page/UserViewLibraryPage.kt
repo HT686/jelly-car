@@ -50,17 +50,25 @@ val UserViewLibraryPage = { context: Context ->
             if (isMusic) {
                 add(
                     LibraryPageElement.Item(
-                        title = context.getString(R.string.media_service_car_section_albums),
-                        iconRes = R.drawable.ic_album,
-                        action = LibraryItemAction.Navigate(LibraryRoute.AlbumsAlpha(route.libraryId)),
+                        title = "Interpreten",
+                        iconRes = R.drawable.ic_artist,
+                        action = LibraryItemAction.Navigate(LibraryRoute.AllArtists(route.libraryId)),
                     ),
                 )
 
                 add(
                     LibraryPageElement.Item(
-                        title = context.getString(R.string.media_service_car_section_artists),
-                        iconRes = R.drawable.ic_artist,
-                        action = LibraryItemAction.Navigate(LibraryRoute.ArtistsAlpha(route.libraryId)),
+                        title = "Alben",
+                        iconRes = R.drawable.ic_album,
+                        action = LibraryItemAction.Navigate(LibraryRoute.AllAlbums(route.libraryId)),
+                    ),
+                )
+
+                add(
+                    LibraryPageElement.Item(
+                        title = "Alle Titel",
+                        iconRes = R.drawable.ic_music_note_white_24dp,
+                        action = LibraryItemAction.Navigate(LibraryRoute.AllSongs(route.libraryId)),
                     ),
                 )
             }

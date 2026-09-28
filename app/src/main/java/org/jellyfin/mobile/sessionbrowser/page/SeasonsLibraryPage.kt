@@ -1,5 +1,6 @@
 package org.jellyfin.mobile.sessionbrowser.page
 
+import org.jellyfin.mobile.R
 import org.jellyfin.mobile.sessionbrowser.LibraryItemAction
 import org.jellyfin.mobile.sessionbrowser.LibraryPageElement
 import org.jellyfin.mobile.sessionbrowser.LibraryRoute
@@ -19,11 +20,14 @@ val SeasonsLibraryPage = { api: ApiClient ->
         result.items
             .drop(offset)
             .take(limit)
-            .map {
+            .map { season ->
+                val seasonName = season.name ?: "Staffel ${season.indexNumber ?: ""}".trim()
                 LibraryPageElement.baseItem(
                     api = api,
-                    item = it,
-                    action = LibraryItemAction.Navigate(LibraryRoute.Episodes(route.seriesId, it.id)),
+                    item = season,
+                    title = seasonName,
+                    iconRes = R.drawable.ic_tv_series,
+                    action = LibraryItemAction.Navigate(LibraryRoute.Episodes(route.seriesId, season.id)),
                 )
             }
     }

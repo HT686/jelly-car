@@ -50,7 +50,7 @@ sealed interface LibraryRoute {
     data class Artist(val artistId: UUID) : LibraryRoute
 
     @Serializable
-    data class Favorites(val libraryId: UUID) : LibraryRoute
+    data class Favorites(val libraryId: UUID? = null) : LibraryRoute
 
     @Serializable
     data class Genres(val libraryId: UUID) : LibraryRoute
@@ -78,4 +78,25 @@ sealed interface LibraryRoute {
 
     @Serializable
     data class Videos(val libraryId: UUID) : LibraryRoute
+
+    @Serializable
+    data object MusicOverview : LibraryRoute
+
+    @Serializable
+    data class AllArtists(val libraryId: UUID? = null) : LibraryRoute
+
+    @Serializable
+    data class AllAlbums(val libraryId: UUID? = null) : LibraryRoute
+
+    @Serializable
+    data class AllSongs(val libraryId: UUID? = null) : LibraryRoute
+
+    @Serializable
+    data object TvShowsRoot : LibraryRoute
+
+    @Serializable
+    data object MoviesRoot : LibraryRoute
+
+    @Serializable
+    data object LiveTvRoot : LibraryRoute
 }
