@@ -7,15 +7,14 @@ import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -23,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.jellyfin.mobile.player.deviceprofile.DeviceProfileBuilder
 import org.jellyfin.mobile.player.source.MediaSourceResolver
 import org.jellyfin.mobile.player.source.RemoteJellyfinMediaSource
 import org.jellyfin.sdk.api.client.ApiClient
@@ -32,6 +32,7 @@ import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.api.client.extensions.videosApi
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.MediaProtocol
 import org.jellyfin.sdk.model.api.MediaStreamProtocol
 import org.jellyfin.sdk.model.api.MediaType
 import org.jellyfin.sdk.model.api.PlaybackOrder
@@ -42,6 +43,8 @@ import org.jellyfin.sdk.model.api.PlayMethod
 import org.jellyfin.sdk.model.api.RepeatMode
 import org.jellyfin.sdk.model.extensions.inWholeTicks
 import org.jellyfin.sdk.model.extensions.ticks
+import org.koin.core.component.KoinComponent
+import org.koin.core.component.inject
 import timber.log.Timber
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
@@ -61,7 +64,7 @@ class CarVideoPlayerManager private constructor(
     private val context: Context,
     private val apiClient: ApiClient,
     private val mediaSourceResolver: MediaSourceResolver,
-) {
+) : KoinComponent {
     companion object {
         @Volatile
         private var instance: CarVideoPlayerManager? = null
@@ -92,6 +95,9 @@ class CarVideoPlayerManager private constructor(
         FILL("Fill (Crop)", C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING),
     }
 
+    private val deviceProfileBuilder: DeviceProfileBuilder by inject()
+    private val mediaSourceFactory: MediaSource.Factory by inject()
+
     private val scope = CoroutineScope(Dispatchers.Main)
     private var progressReportingJob: Job? = null
     private val listeners = CopyOnWriteArrayList<Listener>()
@@ -108,6 +114,9 @@ class CarVideoPlayerManager private constructor(
     var queueIndex: Int = -1
         private set
 
+    private var currentRetryLevel = 0
+    private var currentStartPositionMs = 0L
+
     fun hasNext(): Boolean = queueIndex in playbackQueue.indices && queueIndex < playbackQueue.lastIndex
     fun hasPrevious(): Boolean = queueIndex > 0
 
@@ -119,13 +128,6 @@ class CarVideoPlayerManager private constructor(
             .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
             .setUsage(C.USAGE_MEDIA)
             .build()
-
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Jelly-Car/AndroidAuto")
-            .setAllowCrossProtocolRedirects(true)
-
-        val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
-        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -156,8 +158,19 @@ class CarVideoPlayerManager private constructor(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            Timber.e(error, "Jelly-Car Player Fehler: ${error.message}")
-            listeners.forEach { it.onError(error.localizedMessage ?: "Wiedergabefehler aufgetreten") }
+            Timber.e(error, "Jelly-Car Player Fehler: ${error.message} (${error.errorCodeName})")
+            val item = currentItem
+            val isAudio = item?.type == BaseItemKind.AUDIO || item?.mediaType == MediaType.AUDIO
+
+            // Falls Video mit Fehler fehlschlägt und noch nicht alle Retries aufgebraucht sind
+            if (!isAudio && item != null && currentRetryLevel < 2) {
+                Timber.w("Versuche automatischen Fallback-Retry für Video (Stufe ${currentRetryLevel + 1})")
+                val resumePos = exoPlayer.currentPosition.coerceAtLeast(currentStartPositionMs)
+                playMedia(item, resumePos, currentRetryLevel + 1)
+                return
+            }
+
+            listeners.forEach { it.onError("Wiedergabefehler: ${error.errorCodeName}") }
         }
     }
 
@@ -218,59 +231,30 @@ class CarVideoPlayerManager private constructor(
     fun playVideo(item: BaseItemDto, startPositionMs: Long = 0L) {
         playbackQueue = listOf(item)
         queueIndex = 0
-        playMedia(item, startPositionMs)
+        playMedia(item, startPositionMs, retryLevel = 0)
     }
 
     /**
      * Startet die Wiedergabe eines beliebigen Mediums (Audio oder Video).
      */
-    fun playMedia(item: BaseItemDto, startPositionMs: Long = 0L) {
-        Timber.i("Jelly-Car: Starte Wiedergabe für Item: ${item.name} (${item.id}) bei ${startPositionMs}ms")
+    fun playMedia(item: BaseItemDto, startPositionMs: Long = 0L, retryLevel: Int = 0) {
+        Timber.i("Jelly-Car: Starte Wiedergabe für Item: ${item.name} (${item.id}) bei ${startPositionMs}ms (retryLevel: $retryLevel)")
         currentItem = item
-        listeners.forEach { it.onMediaItemTransition(item) }
+        currentStartPositionMs = startPositionMs
+        currentRetryLevel = retryLevel
+        if (retryLevel == 0) {
+            listeners.forEach { it.onMediaItemTransition(item) }
+        }
+
+        val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
 
         scope.launch {
             try {
-                // 1. Stream-Auflösung via MediaSourceResolver
-                val resolvedResult = withContext(Dispatchers.IO) {
-                    mediaSourceResolver.resolveMediaSource(
-                        itemId = item.id,
-                        startTime = startPositionMs.milliseconds,
-                    )
+                if (isAudio) {
+                    playAudioInternal(item, startPositionMs)
+                } else {
+                    playVideoInternal(item, startPositionMs, retryLevel)
                 }
-
-                val remoteSource = resolvedResult.getOrNull()
-                currentMediaSource = remoteSource
-
-                // 2. Ermitteln der Streaming-URL
-                val streamUrl = determineStreamUrl(item, remoteSource)
-                Timber.d("Jelly-Car Stream-URL: $streamUrl")
-
-                val mediaItemBuilder = MediaItem.Builder()
-                    .setUri(streamUrl.toUri())
-                    .setMediaId(item.id.toString())
-
-                val mediaItem = mediaItemBuilder.build()
-
-                // 3. Vorbereitung & Start des Players
-                exoPlayer.setMediaItem(mediaItem)
-                if (startPositionMs > 0L) {
-                    exoPlayer.seekTo(startPositionMs)
-                }
-                exoPlayer.prepare()
-                exoPlayer.play()
-
-                // Surface sicherstellen (nur bei Video)
-                val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
-                if (!isAudio) {
-                    activeSurface?.let {
-                        if (it.isValid) exoPlayer.setVideoSurface(it)
-                    }
-                }
-
-                // 4. Server-Reporting: Playback Start
-                reportPlaybackStart(item, remoteSource, startPositionMs)
-                startProgressReporting()
             } catch (e: Exception) {
                 Timber.e(e, "Fehler beim Vorbereiten des Medien-Streams")
                 listeners.forEach { it.onError("Fehler beim Laden: ${e.localizedMessage}") }
@@ -278,57 +262,167 @@ class CarVideoPlayerManager private constructor(
         }
     }
 
-    /**
-     * Erstellt die optimale Stream-URL (HLS Transcode, Universal Audio oder Direct Stream).
-     */
-    private fun determineStreamUrl(item: BaseItemDto, remoteSource: RemoteJellyfinMediaSource?): String {
+    private suspend fun playAudioInternal(item: BaseItemDto, startPositionMs: Long) {
         val apiKey = apiClient.accessToken
         val deviceId = apiClient.deviceInfo.id
 
-        // Falls RemoteSource aufgelöst wurde und Transcoding anbietet
-        if (remoteSource != null) {
-            val transUrl = remoteSource.sourceInfo.transcodingUrl
-            if (!transUrl.isNullOrEmpty()) {
-                val fullTransUrl = apiClient.createUrl(transUrl)
-                return appendAuthParam(fullTransUrl, apiKey)
+        val audioUrl = apiClient.universalAudioApi.getUniversalAudioStreamUrl(
+            itemId = item.id,
+            deviceId = deviceId,
+            maxStreamingBitrate = 140000000,
+            container = listOf(
+                "opus",
+                "mp3|mp3",
+                "aac",
+                "m4a",
+                "m4b|aac",
+                "flac",
+                "webma",
+                "webm",
+                "wav",
+                "ogg",
+            ),
+            transcodingProtocol = MediaStreamProtocol.HLS,
+            transcodingContainer = "ts",
+            audioCodec = "aac",
+            enableRemoteMedia = true,
+        )
+        val finalUrl = appendAuthParam(audioUrl, apiKey)
+
+        val mediaItem = MediaItem.Builder()
+            .setUri(finalUrl.toUri())
+            .setMediaId(item.id.toString())
+            .build()
+
+        val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
+        exoPlayer.setMediaSource(mediaSource)
+        if (startPositionMs > 0L) {
+            exoPlayer.seekTo(startPositionMs)
+        }
+        exoPlayer.prepare()
+        exoPlayer.play()
+
+        reportPlaybackStart(item, null, startPositionMs)
+        startProgressReporting()
+    }
+
+    private suspend fun playVideoInternal(item: BaseItemDto, startPositionMs: Long, retryLevel: Int) {
+        val deviceProfile = deviceProfileBuilder.getDeviceProfile()
+
+        // Fallback-Strategie gegen "Source Error":
+        // Stufe 0: Normal über DeviceProfile aufgelöst (DirectPlay oder Server-Transcode)
+        // Stufe 1: Direct Play deaktiviert -> Server nutzt Direct Stream (Remux)
+        // Stufe 2: Direct Stream deaktiviert -> Server erzwingt HLS-Transcode
+        val enableDirectPlay = if (retryLevel >= 1) false else null
+        val enableDirectStream = if (retryLevel >= 2) false else null
+
+        val resolvedResult = withContext(Dispatchers.IO) {
+            mediaSourceResolver.resolveMediaSource(
+                itemId = item.id,
+                deviceProfile = deviceProfile,
+                startTime = startPositionMs.milliseconds,
+                enableDirectPlay = enableDirectPlay,
+                enableDirectStream = enableDirectStream,
+            )
+        }
+
+        val remoteSource = resolvedResult.getOrNull()
+        currentMediaSource = remoteSource
+
+        if (remoteSource == null) {
+            Timber.e("Konnte RemoteMediaSource nicht auflösen")
+            listeners.forEach { it.onError("Videoquelle konnte nicht aufgelöst werden") }
+            return
+        }
+
+        val sourceInfo = remoteSource.sourceInfo
+        val (streamUrl, forcedMimeType) = when (remoteSource.playMethod) {
+            PlayMethod.DIRECT_PLAY -> {
+                when (sourceInfo.protocol) {
+                    MediaProtocol.FILE -> {
+                        val url = apiClient.videosApi.getVideoStreamUrl(
+                            itemId = remoteSource.itemId,
+                            static = true,
+                            playSessionId = remoteSource.playSessionId,
+                            mediaSourceId = remoteSource.id,
+                            deviceId = apiClient.deviceInfo.id,
+                        )
+                        url to null
+                    }
+                    MediaProtocol.HTTP -> {
+                        val url = requireNotNull(sourceInfo.path)
+                        url to MimeTypes.APPLICATION_M3U8
+                    }
+                    else -> {
+                        val url = apiClient.videosApi.getVideoStreamUrl(
+                            itemId = remoteSource.itemId,
+                            static = false,
+                            playSessionId = remoteSource.playSessionId,
+                            deviceId = apiClient.deviceInfo.id,
+                        )
+                        url to null
+                    }
+                }
+            }
+            PlayMethod.DIRECT_STREAM -> {
+                val container = sourceInfo.container ?: "mp4"
+                val url = apiClient.videosApi.getVideoStreamByContainerUrl(
+                    itemId = remoteSource.itemId,
+                    container = container,
+                    playSessionId = remoteSource.playSessionId,
+                    mediaSourceId = remoteSource.id,
+                    deviceId = apiClient.deviceInfo.id,
+                )
+                url to null
+            }
+            PlayMethod.TRANSCODE -> {
+                val transcodingPath = requireNotNull(sourceInfo.transcodingUrl) { "Missing transcode URL" }
+                val transcodingUrl = apiClient.createUrl(transcodingPath)
+                transcodingUrl to MimeTypes.APPLICATION_M3U8
             }
         }
 
-        // Falls Audio-Item (Musik, Song, Audiobook)
-        val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
-        if (isAudio) {
-            val audioUrl = apiClient.universalAudioApi.getUniversalAudioStreamUrl(
-                itemId = item.id,
-                deviceId = deviceId,
-                maxStreamingBitrate = 140000000,
-                container = listOf(
-                    "opus",
-                    "mp3|mp3",
-                    "aac",
-                    "m4a",
-                    "m4b|aac",
-                    "flac",
-                    "webma",
-                    "webm",
-                    "wav",
-                    "ogg",
-                ),
-                transcodingProtocol = MediaStreamProtocol.HLS,
-                transcodingContainer = "ts",
-                audioCodec = "aac",
-                enableRemoteMedia = true,
-            )
-            return appendAuthParam(audioUrl, apiKey)
+        val finalUrl = appendAuthParam(streamUrl, apiClient.accessToken)
+        Timber.i("Jelly-Car Video Stream: playMethod=${remoteSource.playMethod}, mime=$forcedMimeType, url=$finalUrl")
+
+        val mediaItemBuilder = MediaItem.Builder()
+            .setUri(finalUrl.toUri())
+            .setMediaId(item.id.toString())
+
+        if (forcedMimeType != null) {
+            mediaItemBuilder.setMimeType(forcedMimeType)
         }
 
-        // Standardmäßiger Direct Stream über videosApi für Filme, Serien etc.
-        val directUrl = apiClient.videosApi.getVideoStreamUrl(
-            itemId = item.id,
-            static = false,
-            deviceId = deviceId,
-            playSessionId = remoteSource?.playSessionId,
-        )
-        return appendAuthParam(directUrl, apiKey)
+        // Externe Untertitel anbinden, falls vorhanden
+        val subtitleConfigs = remoteSource.externalSubtitleStreams.map { stream ->
+            val subUri = apiClient.createUrl(stream.deliveryUrl).toUri()
+            MediaItem.SubtitleConfiguration.Builder(subUri).apply {
+                setId("${stream.index}")
+                setLabel(stream.displayTitle)
+                setMimeType(stream.mimeType)
+                setLanguage(stream.language)
+            }.build()
+        }
+        if (subtitleConfigs.isNotEmpty()) {
+            mediaItemBuilder.setSubtitleConfigurations(subtitleConfigs)
+        }
+
+        val mediaItem = mediaItemBuilder.build()
+        val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
+
+        exoPlayer.setMediaSource(mediaSource)
+        if (startPositionMs > 0L) {
+            exoPlayer.seekTo(startPositionMs)
+        }
+        exoPlayer.prepare()
+        exoPlayer.play()
+
+        activeSurface?.let {
+            if (it.isValid) exoPlayer.setVideoSurface(it)
+        }
+
+        reportPlaybackStart(item, remoteSource, startPositionMs)
+        startProgressReporting()
     }
 
     private fun appendAuthParam(url: String, apiKey: String?): String {
