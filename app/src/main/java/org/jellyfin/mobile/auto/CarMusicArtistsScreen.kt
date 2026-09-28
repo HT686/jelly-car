@@ -130,6 +130,14 @@ class CarMusicArtistsScreen(
                     .build()
             )
         }
+        actionStripBuilder.addAction(
+            Action.Builder()
+                .setTitle("Suche")
+                .setOnClickListener {
+                    screenManager.push(CarSearchScreen(carContext, apiClient, playerManager, imageHelper))
+                }
+                .build()
+        )
 
         return ListTemplate.Builder()
             .setTitle("Interpreten")
