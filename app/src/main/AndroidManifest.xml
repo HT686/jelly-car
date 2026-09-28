@@ -84,6 +84,8 @@
         <service
             android:name=".sessionbrowser.LibraryService"
             android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
                 <action android:name="androidx.media3.session.MediaSessionService" />
@@ -94,7 +96,9 @@
         <!-- Android Auto Video Service (Navigation Category for Hardware Surface Video Rendering) -->
         <service
             android:name=".auto.CarVideoAppService"
-            android:exported="true">
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="androidx.car.app.CarAppService" />
                 <category android:name="androidx.car.app.category.NAVIGATION" />
