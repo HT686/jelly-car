@@ -13,6 +13,39 @@ val UserViewLibraryPage = { context: Context ->
         buildList {
             val isMusic = route.collectionType == CollectionType.MUSIC
             val isBooks = route.collectionType == CollectionType.BOOKS
+            val isMovies = route.collectionType == CollectionType.MOVIES
+            val isShows = route.collectionType == CollectionType.TVSHOWS
+            val isVideos = route.collectionType == CollectionType.HOMEVIDEOS || route.collectionType == CollectionType.MUSICVIDEOS
+
+            if (isMovies) {
+                add(
+                    LibraryPageElement.Item(
+                        title = "Filme",
+                        iconRes = R.drawable.ic_local_movies_white_64,
+                        action = LibraryItemAction.Navigate(LibraryRoute.Movies(route.libraryId)),
+                    ),
+                )
+            }
+
+            if (isShows) {
+                add(
+                    LibraryPageElement.Item(
+                        title = "Serien",
+                        iconRes = R.drawable.app_logo,
+                        action = LibraryItemAction.Navigate(LibraryRoute.TvShows(route.libraryId)),
+                    ),
+                )
+            }
+
+            if (isVideos) {
+                add(
+                    LibraryPageElement.Item(
+                        title = "Videos",
+                        iconRes = R.drawable.ic_local_movies_white_64,
+                        action = LibraryItemAction.Navigate(LibraryRoute.Videos(route.libraryId)),
+                    ),
+                )
+            }
 
             if (isMusic) {
                 add(

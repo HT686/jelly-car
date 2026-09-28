@@ -30,16 +30,21 @@ import org.jellyfin.mobile.sessionbrowser.page.ArtistsAlphaLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.ArtistsLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.AudioBooksAlphaLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.AudioBooksLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.EpisodesLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.FavoritesLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.GenreLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.GenresLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.MoviesLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.PlaylistLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.PlaylistsLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.RecentLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.RootLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.SearchLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.SeasonsLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.SuggestedLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.TvShowsLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.UserViewLibraryPage
+import org.jellyfin.mobile.sessionbrowser.page.VideosLibraryPage
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.universalAudioApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
@@ -76,6 +81,11 @@ class SessionBrowserCallback(
         RecentLibraryPage(api),
         SuggestedLibraryPage(api),
         SearchLibraryPage(context, api),
+        MoviesLibraryPage(api),
+        TvShowsLibraryPage(api),
+        SeasonsLibraryPage(api),
+        EpisodesLibraryPage(api),
+        VideosLibraryPage(api),
     )
 
     private val LibraryRoute.page get() = pages.firstOrNull { page -> page.route == this::class }

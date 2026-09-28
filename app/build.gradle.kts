@@ -122,7 +122,7 @@ android {
     }
 }
 
-base.archivesName.set("jellyfin-android-v${project.getVersionName()}")
+base.archivesName.set("jelly-car-v${project.getVersionName()}")
 
 dependencies {
     val proprietaryImplementation by configurations
@@ -173,6 +173,10 @@ dependencies {
     proprietaryImplementation(libs.androidx.media3.cast)
     proprietaryImplementation(libs.bundles.playservices)
     implementation(libs.libass.media)
+
+    // Android Auto (Car App Library)
+    implementation(libs.androidx.car.app)
+    implementation(libs.androidx.car.app.projected)
 
     // Room
     implementation(libs.bundles.androidx.room)

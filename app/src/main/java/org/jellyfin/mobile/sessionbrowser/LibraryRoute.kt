@@ -63,4 +63,19 @@ sealed interface LibraryRoute {
 
     @Serializable
     data class Playlist(val playlistId: UUID) : LibraryRoute
+
+    @Serializable
+    data class Movies(val libraryId: UUID) : LibraryRoute
+
+    @Serializable
+    data class TvShows(val libraryId: UUID) : LibraryRoute
+
+    @Serializable
+    data class Seasons(val seriesId: UUID) : LibraryRoute
+
+    @Serializable
+    data class Episodes(val seriesId: UUID, val seasonId: UUID) : LibraryRoute
+
+    @Serializable
+    data class Videos(val libraryId: UUID) : LibraryRoute
 }

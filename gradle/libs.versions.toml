@@ -57,6 +57,9 @@ libass-media = "0.5.1"
 # Room
 androidx-room = "2.8.5"
 
+# Android Auto (Car App Library)
+androidx-car-app = "1.7.0"
+
 # Monitoring
 slf4j-timber = "0.0.4"
 timber = "5.0.1"
@@ -144,6 +147,10 @@ libass-media = { module = "io.github.peerless2012:ass-media", version.ref = "lib
 # Room
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "androidx-room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "androidx-room" }
+
+# Android Auto (Car App Library)
+androidx-car-app = { group = "androidx.car.app", name = "app", version.ref = "androidx-car-app" }
+androidx-car-app-projected = { group = "androidx.car.app", name = "app-projected", version.ref = "androidx-car-app" }
 
 # Monitoring
 slf4j-timber = { module = "io.github.unveloper:slf4j-timber", version.ref = "slf4j-timber" }

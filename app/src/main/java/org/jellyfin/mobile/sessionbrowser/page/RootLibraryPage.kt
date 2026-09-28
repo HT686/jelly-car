@@ -8,7 +8,15 @@ import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.userViewsApi
 import org.jellyfin.sdk.model.api.CollectionType
 
-private val collectionTypes = setOf(CollectionType.MUSIC, CollectionType.BOOKS, CollectionType.PLAYLISTS)
+private val collectionTypes = setOf(
+    CollectionType.MUSIC,
+    CollectionType.BOOKS,
+    CollectionType.PLAYLISTS,
+    CollectionType.MOVIES,
+    CollectionType.TVSHOWS,
+    CollectionType.HOMEVIDEOS,
+    CollectionType.MUSICVIDEOS,
+)
 
 /**
  * Root library page that returns the available libraries (user views) for Android Auto playback.
