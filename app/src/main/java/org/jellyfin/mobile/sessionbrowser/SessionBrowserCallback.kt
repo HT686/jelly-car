@@ -382,7 +382,18 @@ class SessionBrowserCallback(
                         audioCodec = "aac",
                         enableRemoteMedia = true,
                     )
-                    (audioUrl + "&ApiKey=${api.accessToken}") to MimeTypes.APPLICATION_M3U8
+                    val separator = if (audioUrl.contains("?")) "&" else "?"
+                    val finalUrl = if (audioUrl.contains("api_key", ignoreCase = true)) {
+                        audioUrl
+                    } else {
+                        "$audioUrl${separator}api_key=${api.accessToken}"
+                    }
+                    val mime = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
+                        MimeTypes.APPLICATION_M3U8
+                    } else {
+                        null
+                    }
+                    finalUrl to mime
                 }
                 else -> {
                     // Video item (Series episode or Movie) played via MediaSession

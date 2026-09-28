@@ -13,11 +13,16 @@ import androidx.car.app.model.CarColor
 import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Header
 import androidx.car.app.model.Template
+import androidx.car.app.navigation.NavigationManager
+import androidx.car.app.navigation.NavigationManagerCallback
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.jellyfin.mobile.R
 import org.jellyfin.sdk.model.api.BaseItemDto
 import timber.log.Timber
@@ -44,7 +49,20 @@ class CarVideoPlayerScreen(
     private var lastToastTime = 0L
 
     init {
-        // Sofort bei Konstruktion SurfaceCallback registrieren, damit der Host die Hardware-Surface bereitstellt
+        // 1. NavigationManager Callback und aktiven Navigation-Status für Car Host anmelden
+        try {
+            val navManager = carContext.getCarService(NavigationManager::class.java)
+            navManager.setNavigationManagerCallback(object : NavigationManagerCallback {
+                override fun onStopNavigation() {
+                    playerManager.stop()
+                }
+            })
+            navManager.navigationStarted()
+        } catch (e: Exception) {
+            Timber.w(e, "Konnte NavigationManager nicht registrieren")
+        }
+
+        // 2. SurfaceCallback beim Car AppManager registrieren
         carContext.getCarService(AppManager::class.java).setSurfaceCallback(this)
         playerManager.addListener(this)
 
@@ -63,6 +81,13 @@ class CarVideoPlayerScreen(
                 } catch (e: Exception) {
                     Timber.w(e, "Konnte SurfaceCallback nicht deregistrieren")
                 }
+                try {
+                    val navManager = carContext.getCarService(NavigationManager::class.java)
+                    navManager.navigationEnded()
+                    navManager.clearNavigationManagerCallback()
+                } catch (e: Exception) {
+                    Timber.w(e, "Konnte NavigationManager nicht beenden")
+                }
             }
         })
     }
@@ -71,6 +96,13 @@ class CarVideoPlayerScreen(
 
     override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
         Timber.i("Jelly-Car Surface verfügbar: ${surfaceContainer.surface} (${surfaceContainer.width}x${surfaceContainer.height})")
+        lifecycleScope.launch(Dispatchers.Main) {
+            CarToast.makeText(
+                carContext,
+                "Surface verbunden: ${surfaceContainer.width}x${surfaceContainer.height}",
+                CarToast.LENGTH_SHORT,
+            ).show()
+        }
         playerManager.setSurface(surfaceContainer.surface)
     }
 
@@ -198,7 +230,6 @@ class CarVideoPlayerScreen(
         return NavigationTemplate.Builder()
             .setMapActionStrip(mapActionStrip)
             .setActionStrip(actionStripBuilder.build())
-            .setPanModeListener { }
             .build()
     }
 

@@ -200,6 +200,9 @@ class CarVideoPlayerManager private constructor(
             activeSurface = surface
             if (surface != null && surface.isValid) {
                 exoPlayer.setVideoSurface(surface)
+                if (exoPlayer.playbackState != Player.STATE_IDLE) {
+                    exoPlayer.videoScalingMode = currentAspectRatio.scalingMode
+                }
             } else {
                 exoPlayer.clearVideoSurface()
             }
@@ -445,21 +448,21 @@ class CarVideoPlayerManager private constructor(
         val mediaItem = mediaItemBuilder.build()
         val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
 
+        withContext(Dispatchers.Main) {
+            activeSurface?.let {
+                if (it.isValid) {
+                    Timber.i("Jelly-Car: Verbinde aktives Surface vor prepare an ExoPlayer: $it")
+                    exoPlayer.setVideoSurface(it)
+                }
+            }
+        }
+
         exoPlayer.setMediaSource(mediaSource)
         if (startPositionMs > 0L) {
             exoPlayer.seekTo(startPositionMs)
         }
         exoPlayer.prepare()
         exoPlayer.play()
-
-        withContext(Dispatchers.Main) {
-            activeSurface?.let {
-                if (it.isValid) {
-                    Timber.i("Jelly-Car: Verbinde aktives Surface an ExoPlayer: $it")
-                    exoPlayer.setVideoSurface(it)
-                }
-            }
-        }
 
         reportPlaybackStart(item, remoteSource, startPositionMs)
         startProgressReporting()
@@ -489,6 +492,15 @@ class CarVideoPlayerManager private constructor(
             .setMimeType(mimeType)
             .build()
 
+        scope.launch(Dispatchers.Main) {
+            activeSurface?.let {
+                if (it.isValid) {
+                    Timber.i("Jelly-Car Fallback: Verbinde aktives Surface vor prepare an ExoPlayer: $it")
+                    exoPlayer.setVideoSurface(it)
+                }
+            }
+        }
+
         val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
         exoPlayer.setMediaSource(mediaSource)
         if (startPositionMs > 0L) {
@@ -496,15 +508,6 @@ class CarVideoPlayerManager private constructor(
         }
         exoPlayer.prepare()
         exoPlayer.play()
-
-        scope.launch(Dispatchers.Main) {
-            activeSurface?.let {
-                if (it.isValid) {
-                    Timber.i("Jelly-Car Fallback: Verbinde aktives Surface an ExoPlayer: $it")
-                    exoPlayer.setVideoSurface(it)
-                }
-            }
-        }
 
         reportPlaybackStart(item, null, startPositionMs)
         startProgressReporting()

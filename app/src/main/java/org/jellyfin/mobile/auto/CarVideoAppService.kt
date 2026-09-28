@@ -8,10 +8,10 @@ import androidx.media3.common.util.UnstableApi
 /**
  * Service-Einstiegspunkt für Android Auto in Jelly-Car.
  *
- * Registriert mit den Kategorien POI, IOT und NAVIGATION, um maximale Kompatibilität
- * mit dem Android Auto App-Launcher auf allen Fahrzeug-Displays zu gewährleisten und
- * gleichzeitig vollständigen Zugriff auf das Hardware-Surface über den Car AppManager zu erhalten.
- * Dies ermöglicht flüssiges, natives Video-Streaming über ExoPlayer im Fahrzeug.
+ * Registriert mit der Kategorie NAVIGATION, um vollständigen Zugriff auf das
+ * Hardware-Surface über den Car AppManager zu erhalten und die strengen Host-Restriktionen
+ * in echten Fahrzeugen zu erfüllen. Dies ermöglicht flüssiges, natives Video-Streaming
+ * über ExoPlayer im Fahrzeug.
  */
 @UnstableApi
 class CarVideoAppService : CarAppService() {
