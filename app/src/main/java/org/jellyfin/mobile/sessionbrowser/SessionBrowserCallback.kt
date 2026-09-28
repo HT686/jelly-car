@@ -4,10 +4,12 @@ import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.os.Bundle
+import androidx.core.net.toUri
 import androidx.core.os.bundleOf
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaConstants
 import androidx.media3.session.MediaLibraryService.LibraryParams
@@ -55,7 +57,10 @@ import org.jellyfin.mobile.sessionbrowser.page.VideosLibraryPage
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.universalAudioApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
+import org.jellyfin.sdk.api.client.extensions.videosApi
+import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.MediaStreamProtocol
+import org.jellyfin.sdk.model.api.MediaType
 import org.jellyfin.sdk.model.extensions.ticks
 import timber.log.Timber
 
@@ -339,34 +344,62 @@ class SessionBrowserCallback(
     ): ListenableFuture<List<MediaItem>> = CoroutineScope(Dispatchers.IO).future {
         Timber.d("onAddMediaItems $mediaSession $controller $mediaItems")
 
-        mediaItems.mapNotNull {
-            val libraryMediaId = runCatching { Json.decodeFromString<LibraryMediaId>(it.mediaId) }.getOrNull()
+        mediaItems.mapNotNull { mediaItem ->
+            val libraryMediaId = runCatching { Json.decodeFromString<LibraryMediaId>(mediaItem.mediaId) }.getOrNull()
             if (libraryMediaId !is LibraryMediaId.Item) return@mapNotNull null
 
-            val playbackUri = api.universalAudioApi.getUniversalAudioStreamUrl(
-                itemId = libraryMediaId.itemId,
-                deviceId = api.deviceInfo.id,
-                maxStreamingBitrate = 140000000,
-                container = listOf(
-                    "opus",
-                    "mp3|mp3",
-                    "aac",
-                    "m4a",
-                    "m4b|aac",
-                    "flac",
-                    "webma",
-                    "webm",
-                    "wav",
-                    "ogg",
-                ),
-                transcodingProtocol = MediaStreamProtocol.HLS,
-                transcodingContainer = "ts",
-                audioCodec = "aac",
-                enableRemoteMedia = true,
-            )
+            val item = runCatching {
+                api.userLibraryApi.getItem(itemId = libraryMediaId.itemId).content
+            }.getOrNull()
 
-            it.buildUpon().apply {
-                setUri(playbackUri + "&ApiKey=${api.accessToken}")
+            val isLiveTv = item?.type == BaseItemKind.LIVE_TV_CHANNEL || libraryMediaId.route is LibraryRoute.LiveTvRoot
+            val isAudio = item?.type == BaseItemKind.AUDIO || item?.mediaType == MediaType.AUDIO
+
+            val (uri, mimeType) = when {
+                isLiveTv -> {
+                    val url = "${api.baseUrl}/Videos/${libraryMediaId.itemId}/live.m3u8?api_key=${api.accessToken}&DeviceId=${api.deviceInfo.id}"
+                    url to MimeTypes.APPLICATION_M3U8
+                }
+                isAudio -> {
+                    val audioUrl = api.universalAudioApi.getUniversalAudioStreamUrl(
+                        itemId = libraryMediaId.itemId,
+                        deviceId = api.deviceInfo.id,
+                        maxStreamingBitrate = 140000000,
+                        container = listOf(
+                            "opus",
+                            "mp3|mp3",
+                            "aac",
+                            "m4a",
+                            "m4b|aac",
+                            "flac",
+                            "webma",
+                            "webm",
+                            "wav",
+                            "ogg",
+                        ),
+                        transcodingProtocol = MediaStreamProtocol.HLS,
+                        transcodingContainer = "ts",
+                        audioCodec = "aac",
+                        enableRemoteMedia = true,
+                    )
+                    (audioUrl + "&ApiKey=${api.accessToken}") to MimeTypes.APPLICATION_M3U8
+                }
+                else -> {
+                    // Video item (Series episode or Movie) played via MediaSession
+                    val videoUrl = api.videosApi.getVideoStreamUrl(
+                        itemId = libraryMediaId.itemId,
+                        static = false,
+                        deviceId = api.deviceInfo.id,
+                    ) + "&api_key=${api.accessToken}"
+                    videoUrl to null
+                }
+            }
+
+            mediaItem.buildUpon().apply {
+                setUri(uri.toUri())
+                if (mimeType != null) {
+                    setMimeType(mimeType)
+                }
             }.build()
         }
     }

@@ -163,7 +163,7 @@ class CarVideoPlayerManager private constructor(
             val isAudio = item?.type == BaseItemKind.AUDIO || item?.mediaType == MediaType.AUDIO
 
             // Falls Video mit Fehler fehlschlägt und noch nicht alle Retries aufgebraucht sind
-            if (!isAudio && item != null && currentRetryLevel < 2) {
+            if (!isAudio && item != null && currentRetryLevel < 3) {
                 Timber.w("Versuche automatischen Fallback-Retry für Video (Stufe ${currentRetryLevel + 1})")
                 val resumePos = exoPlayer.currentPosition.coerceAtLeast(currentStartPositionMs)
                 playMedia(item, resumePos, currentRetryLevel + 1)
@@ -307,6 +307,15 @@ class CarVideoPlayerManager private constructor(
     }
 
     private suspend fun playVideoInternal(item: BaseItemDto, startPositionMs: Long, retryLevel: Int) {
+        val isLiveTv = item.type == BaseItemKind.LIVE_TV_CHANNEL
+
+        // Wenn Stufe 3 oder Live-TV mit Fehlschlag: direkt auf den zuverlässigen Server-Stream springen
+        if (retryLevel >= 3) {
+            Timber.i("Jelly-Car: Nutze Stufe 3 Universal-Fallback für Video/Live-TV (${item.name})")
+            playDirectServerStream(item, startPositionMs, isLiveTv)
+            return
+        }
+
         val deviceProfile = deviceProfileBuilder.getDeviceProfile()
 
         // Fallback-Strategie gegen "Source Error":
@@ -330,8 +339,8 @@ class CarVideoPlayerManager private constructor(
         currentMediaSource = remoteSource
 
         if (remoteSource == null) {
-            Timber.e("Konnte RemoteMediaSource nicht auflösen")
-            listeners.forEach { it.onError("Videoquelle konnte nicht aufgelöst werden") }
+            Timber.w("Konnte RemoteMediaSource nicht auflösen -> Wechsle auf Direkt-Stream Fallback für ${item.name}")
+            playDirectServerStream(item, startPositionMs, isLiveTv)
             return
         }
 
@@ -351,7 +360,13 @@ class CarVideoPlayerManager private constructor(
                     }
                     MediaProtocol.HTTP -> {
                         val url = requireNotNull(sourceInfo.path)
-                        url to MimeTypes.APPLICATION_M3U8
+                        val mime = when {
+                            url.contains(".m3u8", ignoreCase = true) -> MimeTypes.APPLICATION_M3U8
+                            url.contains(".ts", ignoreCase = true) -> MimeTypes.VIDEO_MP2T
+                            url.contains(".mpd", ignoreCase = true) -> MimeTypes.APPLICATION_MPD
+                            else -> null
+                        }
+                        url to mime
                     }
                     else -> {
                         val url = apiClient.videosApi.getVideoStreamUrl(
@@ -373,12 +388,25 @@ class CarVideoPlayerManager private constructor(
                     mediaSourceId = remoteSource.id,
                     deviceId = apiClient.deviceInfo.id,
                 )
-                url to null
+                val mime = when (container.lowercase()) {
+                    "m3u8" -> MimeTypes.APPLICATION_M3U8
+                    "ts" -> MimeTypes.VIDEO_MP2T
+                    "mp4", "m4v" -> MimeTypes.VIDEO_MP4
+                    "mkv" -> MimeTypes.VIDEO_MATROSKA
+                    "webm" -> MimeTypes.VIDEO_WEBM
+                    else -> null
+                }
+                url to mime
             }
             PlayMethod.TRANSCODE -> {
                 val transcodingPath = requireNotNull(sourceInfo.transcodingUrl) { "Missing transcode URL" }
                 val transcodingUrl = apiClient.createUrl(transcodingPath)
-                transcodingUrl to MimeTypes.APPLICATION_M3U8
+                val mime = when {
+                    transcodingUrl.contains(".m3u8", ignoreCase = true) || sourceInfo.transcodingSubProtocol == MediaStreamProtocol.HLS -> MimeTypes.APPLICATION_M3U8
+                    transcodingUrl.contains(".ts", ignoreCase = true) -> MimeTypes.VIDEO_MP2T
+                    else -> MimeTypes.APPLICATION_M3U8
+                }
+                transcodingUrl to mime
             }
         }
 
@@ -422,6 +450,48 @@ class CarVideoPlayerManager private constructor(
         }
 
         reportPlaybackStart(item, remoteSource, startPositionMs)
+        startProgressReporting()
+    }
+
+    private fun playDirectServerStream(item: BaseItemDto, startPositionMs: Long, isLiveTv: Boolean) {
+        val streamUrl: String
+        val mimeType: String?
+
+        if (isLiveTv) {
+            streamUrl = "${apiClient.baseUrl}/Videos/${item.id}/live.m3u8?api_key=${apiClient.accessToken}&DeviceId=${apiClient.deviceInfo.id}"
+            mimeType = MimeTypes.APPLICATION_M3U8
+        } else {
+            val base = apiClient.videosApi.getVideoStreamUrl(
+                itemId = item.id,
+                static = false,
+                deviceId = apiClient.deviceInfo.id,
+            )
+            streamUrl = appendAuthParam(base, apiClient.accessToken)
+            mimeType = null
+        }
+
+        Timber.i("Jelly-Car Direkt-Fallback: mime=$mimeType, url=$streamUrl")
+        val mediaItem = MediaItem.Builder()
+            .setUri(streamUrl.toUri())
+            .setMediaId(item.id.toString())
+            .apply {
+                if (mimeType != null) setMimeType(mimeType)
+            }
+            .build()
+
+        val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
+        exoPlayer.setMediaSource(mediaSource)
+        if (startPositionMs > 0L) {
+            exoPlayer.seekTo(startPositionMs)
+        }
+        exoPlayer.prepare()
+        exoPlayer.play()
+
+        activeSurface?.let {
+            if (it.isValid) exoPlayer.setVideoSurface(it)
+        }
+
+        reportPlaybackStart(item, null, startPositionMs)
         startProgressReporting()
     }
 

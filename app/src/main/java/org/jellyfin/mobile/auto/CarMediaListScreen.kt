@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import org.jellyfin.mobile.R
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.itemsApi
+import org.jellyfin.sdk.api.client.extensions.liveTvApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
@@ -33,6 +34,7 @@ enum class MediaListType {
     RESUME,
     MOVIES,
     SERIES,
+    LIVE_TV,
     LATEST,
     FOLDER,
 }
@@ -89,6 +91,12 @@ class CarMediaListScreen(
                                 sortBy = listOf(ItemSortBy.SORT_NAME),
                                 sortOrder = listOf(SortOrder.ASCENDING),
                                 recursive = true,
+                                limit = 50,
+                            )
+                            response.content.items ?: emptyList()
+                        }
+                        MediaListType.LIVE_TV -> {
+                            val response = apiClient.liveTvApi.getLiveTvChannels(
                                 limit = 50,
                             )
                             response.content.items ?: emptyList()
@@ -159,6 +167,15 @@ class CarMediaListScreen(
                                     item,
                                 )
                             )
+                        } else if (item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV) {
+                            screenManager.push(
+                                CarVideoPlayerScreen(
+                                    carContext,
+                                    playerManager,
+                                    item,
+                                    0L,
+                                )
+                            )
                         } else {
                             screenManager.push(
                                 CarMediaDetailScreen(
@@ -185,6 +202,15 @@ class CarMediaListScreen(
 
     private fun buildSubtitle(item: BaseItemDto): String {
         return buildString {
+            if (item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV) {
+                val program = item.currentProgram?.name
+                if (!program.isNullOrEmpty()) {
+                    append(program)
+                } else {
+                    append("Live-Stream")
+                }
+                append("  •  ")
+            }
             if (item.type == BaseItemKind.EPISODE && !item.seriesName.isNullOrEmpty()) {
                 append(item.seriesName)
                 if (item.parentIndexNumber != null && item.indexNumber != null) {

@@ -165,7 +165,29 @@ class CarMainScreen(
                 .build()
         )
 
-        // 4. Schnellzugriff: Weiter ansehen
+        // 4. Live-TV
+        val liveTvIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_live_tv)).build()
+        listBuilder.addItem(
+            Row.Builder()
+                .setTitle("Live-TV")
+                .addText("Live-Fernsehen & TV-Sender")
+                .setImage(liveTvIcon)
+                .setOnClickListener {
+                    screenManager.push(
+                        CarMediaListScreen(
+                            carContext,
+                            apiClient,
+                            playerManager,
+                            imageHelper,
+                            MediaListType.LIVE_TV,
+                            "Live-TV",
+                        )
+                    )
+                }
+                .build()
+        )
+
+        // 5. Schnellzugriff: Weiter ansehen
         val resumeIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_recently_played)).build()
         listBuilder.addItem(
             Row.Builder()

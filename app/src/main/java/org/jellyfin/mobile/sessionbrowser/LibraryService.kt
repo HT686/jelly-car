@@ -3,6 +3,7 @@ package org.jellyfin.mobile.sessionbrowser
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.session.MediaLibraryService
 import androidx.media3.session.MediaSession
 import kotlinx.coroutines.runBlocking
@@ -13,6 +14,7 @@ import org.koin.android.ext.android.inject
 class LibraryService : MediaLibraryService() {
     private val apiClientController: ApiClientController by inject()
     private val apiClient: ApiClient by inject()
+    private val mediaSourceFactory: MediaSource.Factory by inject()
 
     private val playerAudioAttributes = AudioAttributes.Builder()
         .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
@@ -20,10 +22,11 @@ class LibraryService : MediaLibraryService() {
         .build()
 
     private val exoPlayer: ExoPlayer by lazy {
-        ExoPlayer.Builder(this).build().apply {
-            setAudioAttributes(playerAudioAttributes, true)
-            setHandleAudioBecomingNoisy(true)
-        }
+        ExoPlayer.Builder(this)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setAudioAttributes(playerAudioAttributes, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
     }
 
     private val mediaLibrarySession: MediaLibrarySession by lazy {
