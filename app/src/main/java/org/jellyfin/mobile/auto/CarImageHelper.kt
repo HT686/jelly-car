@@ -13,19 +13,51 @@ import okhttp3.Request
 import org.jellyfin.mobile.R
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.imageApi
+import org.jellyfin.sdk.api.client.util.AuthorizationHeaderBuilder
 import org.jellyfin.sdk.model.api.ImageType
 import timber.log.Timber
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
  * Hilfsklasse zum Laden, Skalieren und Zwischenspeichern von Film-, Serien-
  * und Episoden-Coverbildern für die Android Auto Anzeige.
+ *
+ * Unterstützt sowohl HTTP als auch HTTPS (inkl. selbstsignierter Zertifikate
+ * und Reverse-Proxies) sowie automatische Authorization-Header.
  */
 class CarImageHelper(
     private val context: Context,
     private val apiClient: ApiClient,
 ) {
-    private val httpClient = OkHttpClient.Builder().build()
+    private val httpClient: OkHttpClient by lazy {
+        try {
+            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+
+            val sslContext = SSLContext.getInstance("TLS").apply {
+                init(null, trustAllCerts, SecureRandom())
+            }
+
+            OkHttpClient.Builder()
+                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+        } catch (e: Exception) {
+            Timber.e(e, "Jelly-Car: Fehler bei Initialisierung des SSL-toleranten OkHttpClients")
+            OkHttpClient.Builder().build()
+        }
+    }
 
     // Cache für bis zu 100 Cover-Bitmaps im Arbeitsspeicher
     private val memoryCache = object : LruCache<String, Bitmap>(100 * 1024 * 1024) {
@@ -67,11 +99,25 @@ class CarImageHelper(
                 imageUrl
             }
 
-            val request = Request.Builder()
-                .url(fullUrl)
-                .build()
+            val requestBuilder = Request.Builder().url(fullUrl)
 
-            val response = httpClient.newCall(request).execute()
+            if (apiClient.accessToken != null) {
+                try {
+                    val authHeader = AuthorizationHeaderBuilder.buildHeader(
+                        clientName = apiClient.clientInfo.name,
+                        clientVersion = apiClient.clientInfo.version,
+                        deviceId = apiClient.deviceInfo.id,
+                        deviceName = apiClient.deviceInfo.name,
+                        accessToken = apiClient.accessToken,
+                    )
+                    requestBuilder.header("Authorization", authHeader)
+                    requestBuilder.header("X-Emby-Token", apiClient.accessToken ?: "")
+                } catch (e: Exception) {
+                    Timber.w(e, "Konnte AuthHeader nicht erstellen")
+                }
+            }
+
+            val response = httpClient.newCall(requestBuilder.build()).execute()
             if (response.isSuccessful) {
                 response.body?.byteStream()?.use { stream ->
                     val bitmap = BitmapFactory.decodeStream(stream)
@@ -80,9 +126,11 @@ class CarImageHelper(
                         return@withContext CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build()
                     }
                 }
+            } else {
+                Timber.w("Bildabruf fehlgeschlagen für Item $itemId: HTTP ${response.code}")
             }
         } catch (e: Exception) {
-            Timber.w(e, "Konnte Bild für Item $itemId nicht laden")
+            Timber.w(e, "Konnte Bild für Item $itemId nicht laden (URL evtl. HTTPS/Zertifikatsfehler)")
         }
 
         // Fallback-Icon aus Android-Ressourcen

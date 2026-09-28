@@ -136,6 +136,9 @@ class CarVideoPlayerManager private constructor(
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build().apply {
                 videoScalingMode = currentAspectRatio.scalingMode
+                trackSelectionParameters = trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                    .build()
                 addListener(playerListener)
             }
     }
@@ -192,12 +195,14 @@ class CarVideoPlayerManager private constructor(
      * Bindet das vom Car App Host gelieferte Surface für die Videodarstellung an.
      */
     fun setSurface(surface: Surface?) {
-        Timber.d("Jelly-Car: setSurface: $surface")
-        activeSurface = surface
-        if (surface != null && surface.isValid) {
-            exoPlayer.setVideoSurface(surface)
-        } else {
-            exoPlayer.clearVideoSurface()
+        scope.launch(Dispatchers.Main) {
+            Timber.i("Jelly-Car: setSurface auf Main-Thread: $surface (isValid=${surface?.isValid})")
+            activeSurface = surface
+            if (surface != null && surface.isValid) {
+                exoPlayer.setVideoSurface(surface)
+            } else {
+                exoPlayer.clearVideoSurface()
+            }
         }
     }
 
@@ -410,15 +415,17 @@ class CarVideoPlayerManager private constructor(
             }
         }
 
+        val containerMime = containerToMimeType(sourceInfo.container)
+        val effectiveMimeType = forcedMimeType ?: containerMime
         val finalUrl = appendAuthParam(streamUrl, apiClient.accessToken)
-        Timber.i("Jelly-Car Video Stream: playMethod=${remoteSource.playMethod}, mime=$forcedMimeType, url=$finalUrl")
+        Timber.i("Jelly-Car Video Stream: playMethod=${remoteSource.playMethod}, mime=$effectiveMimeType, url=$finalUrl")
 
         val mediaItemBuilder = MediaItem.Builder()
             .setUri(finalUrl.toUri())
             .setMediaId(item.id.toString())
 
-        if (forcedMimeType != null) {
-            mediaItemBuilder.setMimeType(forcedMimeType)
+        if (effectiveMimeType != null) {
+            mediaItemBuilder.setMimeType(effectiveMimeType)
         }
 
         // Externe Untertitel anbinden, falls vorhanden
@@ -445,8 +452,13 @@ class CarVideoPlayerManager private constructor(
         exoPlayer.prepare()
         exoPlayer.play()
 
-        activeSurface?.let {
-            if (it.isValid) exoPlayer.setVideoSurface(it)
+        withContext(Dispatchers.Main) {
+            activeSurface?.let {
+                if (it.isValid) {
+                    Timber.i("Jelly-Car: Verbinde aktives Surface an ExoPlayer: $it")
+                    exoPlayer.setVideoSurface(it)
+                }
+            }
         }
 
         reportPlaybackStart(item, remoteSource, startPositionMs)
@@ -467,16 +479,14 @@ class CarVideoPlayerManager private constructor(
                 deviceId = apiClient.deviceInfo.id,
             )
             streamUrl = appendAuthParam(base, apiClient.accessToken)
-            mimeType = null
+            mimeType = containerToMimeType(item.container) ?: MimeTypes.VIDEO_MP4
         }
 
         Timber.i("Jelly-Car Direkt-Fallback: mime=$mimeType, url=$streamUrl")
         val mediaItem = MediaItem.Builder()
             .setUri(streamUrl.toUri())
             .setMediaId(item.id.toString())
-            .apply {
-                if (mimeType != null) setMimeType(mimeType)
-            }
+            .setMimeType(mimeType)
             .build()
 
         val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
@@ -487,12 +497,27 @@ class CarVideoPlayerManager private constructor(
         exoPlayer.prepare()
         exoPlayer.play()
 
-        activeSurface?.let {
-            if (it.isValid) exoPlayer.setVideoSurface(it)
+        scope.launch(Dispatchers.Main) {
+            activeSurface?.let {
+                if (it.isValid) {
+                    Timber.i("Jelly-Car Fallback: Verbinde aktives Surface an ExoPlayer: $it")
+                    exoPlayer.setVideoSurface(it)
+                }
+            }
         }
 
         reportPlaybackStart(item, null, startPositionMs)
         startProgressReporting()
+    }
+
+    private fun containerToMimeType(container: String?): String? = when (container?.lowercase()?.trim()) {
+        "m3u8" -> MimeTypes.APPLICATION_M3U8
+        "ts" -> MimeTypes.VIDEO_MP2T
+        "mp4", "m4v" -> MimeTypes.VIDEO_MP4
+        "mkv", "matroska" -> MimeTypes.VIDEO_MATROSKA
+        "webm" -> MimeTypes.VIDEO_WEBM
+        "avi" -> MimeTypes.VIDEO_AVI
+        else -> null
     }
 
     private fun appendAuthParam(url: String, apiKey: String?): String {

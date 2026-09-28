@@ -44,17 +44,25 @@ class CarVideoPlayerScreen(
     private var lastToastTime = 0L
 
     init {
+        // Sofort bei Konstruktion SurfaceCallback registrieren, damit der Host die Hardware-Surface bereitstellt
+        carContext.getCarService(AppManager::class.java).setSurfaceCallback(this)
+        playerManager.addListener(this)
+
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onCreate(owner: LifecycleOwner) {
-                // SurfaceCallback beim Car AppManager registrieren
-                carContext.getCarService(AppManager::class.java).setSurfaceCallback(this@CarVideoPlayerScreen)
-                playerManager.addListener(this@CarVideoPlayerScreen)
+                Timber.i("Jelly-Car: CarVideoPlayerScreen onCreate -> Starte Video für ${item.name}")
                 playerManager.playVideo(item, startPositionMs)
             }
 
             override fun onDestroy(owner: LifecycleOwner) {
+                Timber.i("Jelly-Car: CarVideoPlayerScreen onDestroy")
                 playerManager.removeListener(this@CarVideoPlayerScreen)
                 playerManager.setSurface(null)
+                try {
+                    carContext.getCarService(AppManager::class.java).setSurfaceCallback(null)
+                } catch (e: Exception) {
+                    Timber.w(e, "Konnte SurfaceCallback nicht deregistrieren")
+                }
             }
         })
     }
@@ -62,12 +70,12 @@ class CarVideoPlayerScreen(
     // --- SurfaceCallback Implementierung ---
 
     override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
-        Timber.d("Jelly-Car Surface verfügbar: ${surfaceContainer.surface}")
+        Timber.i("Jelly-Car Surface verfügbar: ${surfaceContainer.surface} (${surfaceContainer.width}x${surfaceContainer.height})")
         playerManager.setSurface(surfaceContainer.surface)
     }
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
-        Timber.d("Jelly-Car Surface zerstört")
+        Timber.i("Jelly-Car Surface zerstört")
         playerManager.setSurface(null)
     }
 
@@ -190,7 +198,7 @@ class CarVideoPlayerScreen(
         return NavigationTemplate.Builder()
             .setMapActionStrip(mapActionStrip)
             .setActionStrip(actionStripBuilder.build())
-            .setBackgroundColor(CarColor.PRIMARY)
+            .setPanModeListener { }
             .build()
     }
 
