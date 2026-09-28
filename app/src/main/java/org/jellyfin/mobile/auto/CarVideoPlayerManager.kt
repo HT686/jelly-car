@@ -27,10 +27,13 @@ import org.jellyfin.mobile.player.source.MediaSourceResolver
 import org.jellyfin.mobile.player.source.RemoteJellyfinMediaSource
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.playStateApi
+import org.jellyfin.sdk.api.client.extensions.universalAudioApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.api.client.extensions.videosApi
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.BaseItemKind
+import org.jellyfin.sdk.model.api.MediaStreamProtocol
+import org.jellyfin.sdk.model.api.MediaType
 import org.jellyfin.sdk.model.api.PlaybackOrder
 import org.jellyfin.sdk.model.api.PlaybackProgressInfo
 import org.jellyfin.sdk.model.api.PlaybackStartInfo
@@ -99,6 +102,14 @@ class CarVideoPlayerManager private constructor(
         private set
     var currentAspectRatio: AspectRatioMode = AspectRatioMode.FIT
         private set
+
+    var playbackQueue: List<BaseItemDto> = emptyList()
+        private set
+    var queueIndex: Int = -1
+        private set
+
+    fun hasNext(): Boolean = queueIndex in playbackQueue.indices && queueIndex < playbackQueue.lastIndex
+    fun hasPrevious(): Boolean = queueIndex > 0
 
     private var activeSurface: Surface? = null
 
@@ -177,6 +188,27 @@ class CarVideoPlayerManager private constructor(
         }
     }
 
+    fun playQueue(items: List<BaseItemDto>, startIndex: Int = 0) {
+        if (items.isEmpty()) return
+        playbackQueue = items
+        queueIndex = startIndex.coerceIn(items.indices)
+        playMedia(items[queueIndex], 0L)
+    }
+
+    fun playNext() {
+        if (hasNext()) {
+            queueIndex++
+            playMedia(playbackQueue[queueIndex], 0L)
+        }
+    }
+
+    fun playPrevious() {
+        if (hasPrevious()) {
+            queueIndex--
+            playMedia(playbackQueue[queueIndex], 0L)
+        }
+    }
+
     /**
      * Startet die Wiedergabe eines Films, einer Episode oder eines Videos.
      *
@@ -184,6 +216,15 @@ class CarVideoPlayerManager private constructor(
      * @param startPositionMs Startposition in Millisekunden (z. B. für "Weiter ansehen")
      */
     fun playVideo(item: BaseItemDto, startPositionMs: Long = 0L) {
+        playbackQueue = listOf(item)
+        queueIndex = 0
+        playMedia(item, startPositionMs)
+    }
+
+    /**
+     * Startet die Wiedergabe eines beliebigen Mediums (Audio oder Video).
+     */
+    fun playMedia(item: BaseItemDto, startPositionMs: Long = 0L) {
         Timber.i("Jelly-Car: Starte Wiedergabe für Item: ${item.name} (${item.id}) bei ${startPositionMs}ms")
         currentItem = item
         listeners.forEach { it.onMediaItemTransition(item) }
@@ -219,23 +260,26 @@ class CarVideoPlayerManager private constructor(
                 exoPlayer.prepare()
                 exoPlayer.play()
 
-                // Surface sicherstellen
-                activeSurface?.let {
-                    if (it.isValid) exoPlayer.setVideoSurface(it)
+                // Surface sicherstellen (nur bei Video)
+                val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
+                if (!isAudio) {
+                    activeSurface?.let {
+                        if (it.isValid) exoPlayer.setVideoSurface(it)
+                    }
                 }
 
                 // 4. Server-Reporting: Playback Start
                 reportPlaybackStart(item, remoteSource, startPositionMs)
                 startProgressReporting()
             } catch (e: Exception) {
-                Timber.e(e, "Fehler beim Vorbereiten des Video-Streams")
-                listeners.forEach { it.onError("Fehler beim Laden des Videos: ${e.localizedMessage}") }
+                Timber.e(e, "Fehler beim Vorbereiten des Medien-Streams")
+                listeners.forEach { it.onError("Fehler beim Laden: ${e.localizedMessage}") }
             }
         }
     }
 
     /**
-     * Erstellt die optimale Stream-URL (HLS Transcode oder Direct Stream).
+     * Erstellt die optimale Stream-URL (HLS Transcode, Universal Audio oder Direct Stream).
      */
     private fun determineStreamUrl(item: BaseItemDto, remoteSource: RemoteJellyfinMediaSource?): String {
         val apiKey = apiClient.accessToken
@@ -250,7 +294,34 @@ class CarVideoPlayerManager private constructor(
             }
         }
 
-        // Standardmäßiger Direct Stream über videosApi
+        // Falls Audio-Item (Musik, Song, Audiobook)
+        val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
+        if (isAudio) {
+            val audioUrl = apiClient.universalAudioApi.getUniversalAudioStreamUrl(
+                itemId = item.id,
+                deviceId = deviceId,
+                maxStreamingBitrate = 140000000,
+                container = listOf(
+                    "opus",
+                    "mp3|mp3",
+                    "aac",
+                    "m4a",
+                    "m4b|aac",
+                    "flac",
+                    "webma",
+                    "webm",
+                    "wav",
+                    "ogg",
+                ),
+                transcodingProtocol = MediaStreamProtocol.HLS,
+                transcodingContainer = "ts",
+                audioCodec = "aac",
+                enableRemoteMedia = true,
+            )
+            return appendAuthParam(audioUrl, apiKey)
+        }
+
+        // Standardmäßiger Direct Stream über videosApi für Filme, Serien etc.
         val directUrl = apiClient.videosApi.getVideoStreamUrl(
             itemId = item.id,
             static = false,
@@ -470,8 +541,12 @@ class CarVideoPlayerManager private constructor(
                 )
                 apiClient.playStateApi.markPlayedItem(itemId = item.id)
             } catch (e: Exception) {
-                Timber.w(e, "Fehler beim Markieren des Videos als gesehen")
+                Timber.w(e, "Fehler beim Markieren des Mediums als abgespielt")
             }
+        }
+
+        if (hasNext()) {
+            playNext()
         }
     }
 

@@ -20,6 +20,7 @@ import org.jellyfin.mobile.R
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.userViewsApi
 import org.jellyfin.sdk.model.api.BaseItemDto
+import org.jellyfin.sdk.model.api.BaseItemKind
 import org.jellyfin.sdk.model.api.CollectionType
 import timber.log.Timber
 
@@ -100,51 +101,27 @@ class CarMainScreen(
 
         val listBuilder = ItemList.Builder()
 
-        // 1. Schnellzugriff: Weiter ansehen
-        val resumeIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_recently_played)).build()
+        // 1. Musik-Bereich (Interpreten, Alben, Titel, Playlists, Favoriten)
+        val musicIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_music_note_white_24dp)).build()
         listBuilder.addItem(
             Row.Builder()
-                .setTitle("Weiter ansehen")
-                .addText("Angefangene Filme und Episoden fortsetzen")
-                .setImage(resumeIcon)
+                .setTitle("Musik")
+                .addText("Interpreten, Alben, Titel & Playlists")
+                .setImage(musicIcon)
                 .setOnClickListener {
                     screenManager.push(
-                        CarMediaListScreen(
+                        CarMusicScreen(
                             carContext,
                             apiClient,
                             playerManager,
                             imageHelper,
-                            MediaListType.RESUME,
-                            "Weiter ansehen",
                         )
                     )
                 }
                 .build()
         )
 
-        // 2. Schnellzugriff: Filme
-        val moviesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_local_movies_white_64)).build()
-        listBuilder.addItem(
-            Row.Builder()
-                .setTitle("Filme")
-                .addText("Alle Spielfilme durchstöbern")
-                .setImage(moviesIcon)
-                .setOnClickListener {
-                    screenManager.push(
-                        CarMediaListScreen(
-                            carContext,
-                            apiClient,
-                            playerManager,
-                            imageHelper,
-                            MediaListType.MOVIES,
-                            "Filme",
-                        )
-                    )
-                }
-                .build()
-        )
-
-        // 3. Schnellzugriff: Serien
+        // 2. Serien
         val seriesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_tv_series)).build()
         listBuilder.addItem(
             Row.Builder()
@@ -166,7 +143,51 @@ class CarMainScreen(
                 .build()
         )
 
-        // 4. Schnellzugriff: Neueste Medien
+        // 3. Filme
+        val moviesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_local_movies_white_64)).build()
+        listBuilder.addItem(
+            Row.Builder()
+                .setTitle("Filme")
+                .addText("Alle Spielfilme durchstöbern")
+                .setImage(moviesIcon)
+                .setOnClickListener {
+                    screenManager.push(
+                        CarMediaListScreen(
+                            carContext,
+                            apiClient,
+                            playerManager,
+                            imageHelper,
+                            MediaListType.MOVIES,
+                            "Filme",
+                        )
+                    )
+                }
+                .build()
+        )
+
+        // 4. Schnellzugriff: Weiter ansehen
+        val resumeIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_recently_played)).build()
+        listBuilder.addItem(
+            Row.Builder()
+                .setTitle("Weiter ansehen")
+                .addText("Angefangene Filme und Episoden fortsetzen")
+                .setImage(resumeIcon)
+                .setOnClickListener {
+                    screenManager.push(
+                        CarMediaListScreen(
+                            carContext,
+                            apiClient,
+                            playerManager,
+                            imageHelper,
+                            MediaListType.RESUME,
+                            "Weiter ansehen",
+                        )
+                    )
+                }
+                .build()
+        )
+
+        // 5. Schnellzugriff: Neueste Medien
         val latestIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_fast_forward_black_32dp)).build()
         listBuilder.addItem(
             Row.Builder()
@@ -188,7 +209,7 @@ class CarMainScreen(
                 .build()
         )
 
-        // 5. Individuelle Video-Bibliotheken (z. B. "Heimvideos", "Dokumentationen")
+        // 6. Individuelle Video-Bibliotheken (z. B. "Heimvideos", "Dokumentationen")
         videoLibraries.forEach { lib ->
             val libTitle = lib.name ?: "Bibliothek"
             val libType = when (lib.collectionType) {
@@ -218,22 +239,38 @@ class CarMainScreen(
             )
         }
 
-        // Header mit Such-Aktion
-        val actionStrip = ActionStrip.Builder()
-            .addAction(
+        // Header mit Such- und Wiedergabe-Aktion
+        val actionStripBuilder = ActionStrip.Builder()
+        if (playerManager.currentItem != null) {
+            val isAudio = playerManager.currentItem?.type == BaseItemKind.AUDIO
+            actionStripBuilder.addAction(
                 Action.Builder()
-                    .setTitle("Suche")
+                    .setTitle("Wiedergabe")
                     .setOnClickListener {
-                        screenManager.push(CarSearchScreen(carContext, apiClient, playerManager, imageHelper))
+                        if (isAudio) {
+                            screenManager.push(CarAudioPlayerScreen(carContext, apiClient, playerManager, imageHelper))
+                        } else {
+                            playerManager.currentItem?.let {
+                                screenManager.push(CarVideoPlayerScreen(carContext, playerManager, it))
+                            }
+                        }
                     }
                     .build()
             )
-            .build()
+        }
+        actionStripBuilder.addAction(
+            Action.Builder()
+                .setTitle("Suche")
+                .setOnClickListener {
+                    screenManager.push(CarSearchScreen(carContext, apiClient, playerManager, imageHelper))
+                }
+                .build()
+        )
 
         return ListTemplate.Builder()
             .setTitle("Jelly-Car")
             .setHeaderAction(Action.APP_ICON)
-            .setActionStrip(actionStrip)
+            .setActionStrip(actionStripBuilder.build())
             .setSingleList(listBuilder.build())
             .build()
     }
