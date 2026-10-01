@@ -24,6 +24,7 @@ import kotlinx.coroutines.guava.await
 import kotlinx.coroutines.guava.future
 import kotlinx.serialization.json.Json
 import org.jellyfin.mobile.R
+import org.jellyfin.mobile.auto.CarUrlHelper
 import org.jellyfin.mobile.sessionbrowser.page.AlbumLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.AlbumsAlphaLibraryPage
 import org.jellyfin.mobile.sessionbrowser.page.AlbumsLibraryPage
@@ -140,8 +141,17 @@ class SessionBrowserCallback(
                 setTitle(title)
                 setArtist(artist)
                 setAlbumTitle(album)
+                val isVideoItem = when (action) {
+                    is LibraryItemAction.Play -> {
+                        val kind = action.item.type
+                        val mediaType = action.item.mediaType
+                        kind == BaseItemKind.MOVIE || kind == BaseItemKind.EPISODE || kind == BaseItemKind.VIDEO || mediaType == MediaType.VIDEO
+                    }
+                    else -> false
+                }
+
                 setIsBrowsable(action is LibraryItemAction.Navigate)
-                setIsPlayable(action is LibraryItemAction.Play)
+                setIsPlayable(action is LibraryItemAction.Play && !isVideoItem)
 
                 if (image != null) {
                     setArtworkUri(image)
@@ -355,12 +365,27 @@ class SessionBrowserCallback(
             val isLiveTv = item?.type == BaseItemKind.LIVE_TV_CHANNEL || libraryMediaId.route is LibraryRoute.LiveTvRoot
             val isAudio = item?.type == BaseItemKind.AUDIO || item?.mediaType == MediaType.AUDIO
 
+            // Videos (Filme, Serien-Episoden, etc.) dürfen NICHT über den Audio-MediaBrowserService abgespielt werden.
+            // Die native Jelly-Car CarApp (CarVideoAppService -> CarVideoPlayerScreen) ist der designierte Video-Pfad.
+            if (!isLiveTv && !isAudio) {
+                Timber.w(
+                    "SessionBrowserCallback: Video-Item '%s' (%s, Typ=%s) wird im Audio-MediaBrowser abgewiesen. " +
+                        "Videos dürfen nicht über den Audio-Player abgespielt werden. Bitte die Jelly-Car CarApp Video-Oberfläche nutzen!",
+                    item?.name,
+                    libraryMediaId.itemId,
+                    item?.type,
+                )
+                return@mapNotNull null
+            }
+
             val (uri, mimeType) = when {
                 isLiveTv -> {
                     val url = "${api.baseUrl}/Videos/${libraryMediaId.itemId}/live.m3u8?api_key=${api.accessToken}&DeviceId=${api.deviceInfo.id}"
+                    CarUrlHelper.checkHostConsistency(api.baseUrl, url, "SessionBrowserLiveTv")
+                    Timber.d("SessionBrowserCallback: Live-TV Stream URL: %s", CarUrlHelper.redactUrl(url))
                     url to MimeTypes.APPLICATION_M3U8
                 }
-                isAudio -> {
+                else -> {
                     val audioUrl = api.universalAudioApi.getUniversalAudioStreamUrl(
                         itemId = libraryMediaId.itemId,
                         deviceId = api.deviceInfo.id,
@@ -388,21 +413,14 @@ class SessionBrowserCallback(
                     } else {
                         "$audioUrl${separator}api_key=${api.accessToken}"
                     }
+                    CarUrlHelper.checkHostConsistency(api.baseUrl, finalUrl, "SessionBrowserAudio")
+                    Timber.d("SessionBrowserCallback: Audio Stream URL: %s", CarUrlHelper.redactUrl(finalUrl))
                     val mime = if (finalUrl.contains(".m3u8", ignoreCase = true)) {
                         MimeTypes.APPLICATION_M3U8
                     } else {
                         null
                     }
                     finalUrl to mime
-                }
-                else -> {
-                    // Video item (Series episode or Movie) played via MediaSession
-                    val videoUrl = api.videosApi.getVideoStreamUrl(
-                        itemId = libraryMediaId.itemId,
-                        static = false,
-                        deviceId = api.deviceInfo.id,
-                    ) + "&api_key=${api.accessToken}"
-                    videoUrl to null
                 }
             }
 

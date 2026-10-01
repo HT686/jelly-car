@@ -32,13 +32,17 @@ echo "🔌 Richte ADB-Port-Weiterleitung ein (Port 5277)..."
 "$ADB" forward tcp:5277 tcp:5277
 echo "✅ Port-Weiterleitung aktiv (tcp:5277 -> tcp:5277)"
 
+# 3. Android Auto Einstellungen auf dem Smartphone automatisch öffnen
+echo "📱 Öffne Android Auto Einstellungen auf dem Smartphone..."
+"$ADB" shell am start -n com.google.android.projection.gearhead/.companion.settings.DefaultSettingsActivity 2>/dev/null || true
+
 echo ""
-echo "ℹ️  HINWEIS FÜR DIE ERSTE BENUTZUNG AUF DEM SMARTPHONE:"
-echo "   1. Öffne auf dem Smartphone 'Einstellungen' -> suche nach 'Android Auto'."
-echo "   2. Scrolle ganz nach unten und tippe 10x auf 'Version', um Entwicklereinstellungen zu aktivieren."
-echo "   3. Tippe oben rechts auf die 3 Punkte -> 'Head-Unit-Server starten'."
+echo "ℹ️  SCHRITTE AUF DEM SMARTPHONE (Pixel 9 Pro):"
+echo "   1. Die Android Auto Einstellungen wurden soeben auf deinem Display geöffnet."
+echo "   2. Falls noch nicht geschehen: Nach unten scrollen, 10x auf 'Version' tippen (Entwicklermodus)."
+echo "   3. Oben rechts auf die 3 Punkte tippen -> 'Head-Unit-Server starten'."
 echo "----------------------------------------------------------"
-echo "🚀 Starte Desktop Head Unit..."
+echo "🚀 Starte Desktop Head Unit (wartet auf Server)..."
 
 export LD_LIBRARY_PATH="${DHU_LIB}:${LD_LIBRARY_PATH}"
 
@@ -49,4 +53,10 @@ if [ $# -eq 0 ]; then
     CONFIG_ARG="-c ${DHU_DIR}/config/default_720p.ini"
 fi
 
-exec "${DHU_BIN}" $CONFIG_ARG "$@"
+while true; do
+    echo "Verbinde mit Head-Unit-Server auf Pixel 9 Pro..."
+    "${DHU_BIN}" $CONFIG_ARG "$@" || true
+    echo "⚠️  Verbindung noch nicht hergestellt oder getrennt."
+    echo "   Bitte auf dem Smartphone 'Head-Unit-Server starten' antippen. Neuer Versuch in 3s..."
+    sleep 3
+done

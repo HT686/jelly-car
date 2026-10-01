@@ -22,6 +22,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.util.UnstableApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jellyfin.mobile.R
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -34,6 +35,9 @@ import timber.log.Timber
  * Hardware-[android.view.Surface] bereitzustellen. Dieses Surface wird an den
  * [CarVideoPlayerManager] übergeben, wo der [androidx.media3.exoplayer.ExoPlayer]
  * die Videoframes hardwarebeschleunigt direkt auf das Armaturenbrett-Display projiziert.
+ *
+ * Beinhaltet lückenlose Diagnoseprotokolle für den Surface-Lifecycle und meldet
+ * Verzögerungen oder Ausbleiben von [onSurfaceAvailable] strukturiert.
  */
 @UnstableApi
 class CarVideoPlayerScreen(
@@ -47,29 +51,57 @@ class CarVideoPlayerScreen(
     private var currentPosMs = 0L
     private var durationMs = 0L
     private var lastToastTime = 0L
+    private var surfaceReceived = false
 
     init {
+        Timber.i("Jelly-Car: CarVideoPlayerScreen created for item '%s' (id=%s)", item.name, item.id)
+
         // 1. NavigationManager Callback und aktiven Navigation-Status für Car Host anmelden
         try {
             val navManager = carContext.getCarService(NavigationManager::class.java)
             navManager.setNavigationManagerCallback(object : NavigationManagerCallback {
                 override fun onStopNavigation() {
+                    Timber.i("Jelly-Car: NavigationManager Callback onStopNavigation aufgerufen -> stoppe Player")
                     playerManager.stop()
                 }
             })
             navManager.navigationStarted()
+            Timber.i("Jelly-Car: navigationStarted called")
         } catch (e: Exception) {
-            Timber.w(e, "Konnte NavigationManager nicht registrieren")
+            Timber.w(e, "Jelly-Car: Konnte NavigationManager nicht registrieren")
         }
 
         // 2. SurfaceCallback beim Car AppManager registrieren
-        carContext.getCarService(AppManager::class.java).setSurfaceCallback(this)
+        try {
+            carContext.getCarService(AppManager::class.java).setSurfaceCallback(this)
+            Timber.i("Jelly-Car: SurfaceCallback registered with AppManager")
+        } catch (e: Exception) {
+            Timber.w(e, "Jelly-Car: Konnte SurfaceCallback nicht bei AppManager registrieren")
+        }
+
         playerManager.addListener(this)
 
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onCreate(owner: LifecycleOwner) {
-                Timber.i("Jelly-Car: CarVideoPlayerScreen onCreate -> Starte Video für ${item.name}")
+                Timber.i(
+                    "Jelly-Car: CarVideoPlayerScreen onCreate -> Starte Video für '%s' (id=%s) ab %dms",
+                    item.name,
+                    item.id,
+                    startPositionMs,
+                )
                 playerManager.playVideo(item, startPositionMs)
+
+                // Diagnose: Prüfen, ob der Car Host tatsächlich onSurfaceAvailable() aufruft
+                lifecycleScope.launch {
+                    delay(3500L)
+                    if (!surfaceReceived) {
+                        Timber.w(
+                            "Jelly-Car DIAGNOSE: onSurfaceAvailable() wurde nach 3.5s noch NICHT vom Car Host aufgerufen! " +
+                                "Der Car Host (Head Unit / DHU) hat bisher kein Surface bereitgestellt. " +
+                                "Prüfe, ob ACCESS_SURFACE und NAVIGATION_TEMPLATES gewährt sind und ob der Car Host das Surface blockiert.",
+                        )
+                    }
+                }
             }
 
             override fun onDestroy(owner: LifecycleOwner) {
@@ -78,15 +110,17 @@ class CarVideoPlayerScreen(
                 playerManager.setSurface(null)
                 try {
                     carContext.getCarService(AppManager::class.java).setSurfaceCallback(null)
+                    Timber.i("Jelly-Car: SurfaceCallback unregistered")
                 } catch (e: Exception) {
-                    Timber.w(e, "Konnte SurfaceCallback nicht deregistrieren")
+                    Timber.w(e, "Jelly-Car: Konnte SurfaceCallback nicht deregistrieren")
                 }
                 try {
                     val navManager = carContext.getCarService(NavigationManager::class.java)
                     navManager.navigationEnded()
                     navManager.clearNavigationManagerCallback()
+                    Timber.i("Jelly-Car: navigationEnded called")
                 } catch (e: Exception) {
-                    Timber.w(e, "Konnte NavigationManager nicht beenden")
+                    Timber.w(e, "Jelly-Car: Konnte NavigationManager nicht beenden")
                 }
             }
         })
@@ -95,7 +129,17 @@ class CarVideoPlayerScreen(
     // --- SurfaceCallback Implementierung ---
 
     override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
-        Timber.i("Jelly-Car Surface verfügbar: ${surfaceContainer.surface} (${surfaceContainer.width}x${surfaceContainer.height})")
+        surfaceReceived = true
+        val surface = surfaceContainer.surface
+        Timber.i(
+            "Jelly-Car Surface available: surface=%s, valid=%b, size=%dx%d, dpi=%d",
+            surface,
+            surface?.isValid == true,
+            surfaceContainer.width,
+            surfaceContainer.height,
+            surfaceContainer.dpi,
+        )
+        Timber.i("Jelly-Car: Übergabe des Surface an playerManager.setSurface()")
         lifecycleScope.launch(Dispatchers.Main) {
             CarToast.makeText(
                 carContext,
@@ -103,11 +147,20 @@ class CarVideoPlayerScreen(
                 CarToast.LENGTH_SHORT,
             ).show()
         }
-        playerManager.setSurface(surfaceContainer.surface)
+        playerManager.setSurface(surface)
     }
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
-        Timber.i("Jelly-Car Surface zerstört")
+        surfaceReceived = false
+        val surface = surfaceContainer.surface
+        Timber.i(
+            "Jelly-Car Surface destroyed: surface=%s, valid=%b, size=%dx%d",
+            surface,
+            surface?.isValid == true,
+            surfaceContainer.width,
+            surfaceContainer.height,
+        )
+        Timber.i("Jelly-Car: Trenne Surface via playerManager.setSurface(null)")
         playerManager.setSurface(null)
     }
 
@@ -151,9 +204,6 @@ class CarVideoPlayerScreen(
     // --- Template-Erstellung ---
 
     override fun onGetTemplate(): Template {
-        val titleText = formatTitle(item)
-        val timeText = "${formatTime(currentPosMs)} / ${formatTime(durationMs)}"
-
         // 1. Primäre Wiedergabesteuerung (Play, Pause, Vor-/Rücklauf)
         val playPauseIconRes = if (isPlaying) R.drawable.ic_pause_black_42dp else R.drawable.ic_play_black_42dp
         val playPauseIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, playPauseIconRes)).build()

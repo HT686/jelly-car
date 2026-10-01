@@ -3,11 +3,13 @@ package org.jellyfin.mobile.auto
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
+import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Pane
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
@@ -24,6 +26,9 @@ import timber.log.Timber
  *
  * Zeigt Albumcover, Songtitel, Interpret, Albumname, aktuelle Spielzeit
  * sowie Steuerungselemente (Play/Pause, Vorheriger Titel, Nächster Titel) an.
+ *
+ * Beachtet die Android Auto PaneTemplate-Restriktion von maximal 2 Actions
+ * auf dem Pane selbst und lagert zusätzliche Aktionen in die ActionStrip aus.
  */
 @UnstableApi
 class CarAudioPlayerScreen(
@@ -102,11 +107,21 @@ class CarAudioPlayerScreen(
                 Row.Builder()
                     .setTitle("Keine aktive Wiedergabe")
                     .addText("Wähle einen Song aus der Mediathek aus.")
-                    .build()
+                    .build(),
             )
             return PaneTemplate.Builder(paneBuilder.build())
                 .setTitle("Musikplayer")
                 .setHeaderAction(Action.BACK)
+                .setActionStrip(
+                    ActionStrip.Builder()
+                        .addAction(
+                            Action.Builder()
+                                .setTitle("Zurück")
+                                .setOnClickListener { screenManager.pop() }
+                                .build(),
+                        )
+                        .build(),
+                )
                 .build()
         }
 
@@ -116,7 +131,7 @@ class CarAudioPlayerScreen(
             Row.Builder()
                 .setTitle(item.name.orEmpty())
                 .addText(artistText)
-                .build()
+                .build(),
         )
 
         // 2. Album & Laufzeit
@@ -126,39 +141,43 @@ class CarAudioPlayerScreen(
             Row.Builder()
                 .setTitle(albumName)
                 .addText(timeString)
-                .build()
+                .build(),
         )
 
-        // 3. Steuerungsbuttons (Vorheriger, Play/Pause, Nächster)
-        if (playerManager.hasPrevious()) {
-            paneBuilder.addAction(
-                Action.Builder()
-                    .setTitle("Vorheriger")
-                    .setOnClickListener {
-                        playerManager.playPrevious()
-                    }
-                    .build()
-            )
-        }
-
+        // 3. Steuerungsbuttons auf dem Pane:
+        // WICHTIG: Android Auto erlaubt auf einem Pane strikt maximal 2 Actions!
         val playPauseTitle = if (isPlaying) "Pause" else "Abspielen"
+        val playPauseIconRes = if (isPlaying) R.drawable.ic_pause_black_42dp else R.drawable.ic_play_black_42dp
         paneBuilder.addAction(
             Action.Builder()
                 .setTitle(playPauseTitle)
+                .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, playPauseIconRes)).build())
                 .setOnClickListener {
                     playerManager.togglePlayPause()
                 }
-                .build()
+                .build(),
         )
 
+        // Zweite Action auf dem Pane: Nächster Titel oder Vorheriger Titel
         if (playerManager.hasNext()) {
             paneBuilder.addAction(
                 Action.Builder()
                     .setTitle("Nächster")
+                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_skip_next_black_32dp)).build())
                     .setOnClickListener {
                         playerManager.playNext()
                     }
-                    .build()
+                    .build(),
+            )
+        } else if (playerManager.hasPrevious()) {
+            paneBuilder.addAction(
+                Action.Builder()
+                    .setTitle("Vorheriger")
+                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_skip_previous_black_32dp)).build())
+                    .setOnClickListener {
+                        playerManager.playPrevious()
+                    }
+                    .build(),
             )
         }
 
@@ -167,9 +186,45 @@ class CarAudioPlayerScreen(
             paneBuilder.setImage(it)
         }
 
+        // 4. Zusätzliche Steuerungsleiste (ActionStrip) für Vorheriger, Nächster und Stop
+        val actionStripBuilder = ActionStrip.Builder()
+
+        if (playerManager.hasPrevious()) {
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_skip_previous_black_32dp)).build())
+                    .setOnClickListener {
+                        playerManager.playPrevious()
+                    }
+                    .build(),
+            )
+        }
+
+        if (playerManager.hasNext()) {
+            actionStripBuilder.addAction(
+                Action.Builder()
+                    .setIcon(CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_skip_next_black_32dp)).build())
+                    .setOnClickListener {
+                        playerManager.playNext()
+                    }
+                    .build(),
+            )
+        }
+
+        actionStripBuilder.addAction(
+            Action.Builder()
+                .setTitle("Stop")
+                .setOnClickListener {
+                    playerManager.stop()
+                    screenManager.pop()
+                }
+                .build(),
+        )
+
         return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(item.name.orEmpty())
             .setHeaderAction(Action.BACK)
+            .setActionStrip(actionStripBuilder.build())
             .build()
     }
 

@@ -119,6 +119,9 @@ val applicationModule = module {
 
         val baseDataSourceFactory = DefaultHttpDataSource.Factory().apply {
             setUserAgent(Util.getUserAgent(context, Constants.APP_INFO_NAME))
+            setAllowCrossProtocolRedirects(true)
+            setConnectTimeoutMs(15_000)
+            setReadTimeoutMs(20_000)
         }
 
         val dataSourceFactory = DefaultDataSource.Factory(context, baseDataSourceFactory)
@@ -127,9 +130,11 @@ val applicationModule = module {
         // access token in the URL for Android Auto.
         ResolvingDataSource.Factory(dataSourceFactory) { dataSpec: DataSpec ->
             // Only send authorization header if URI matches the jellyfin server
-            val baseUrlAuthority = apiClient.baseUrl?.toUri()?.authority
+            val baseUrlUri = apiClient.baseUrl?.toUri()
+            val matchesHost = dataSpec.uri.host != null && dataSpec.uri.host.equals(baseUrlUri?.host, ignoreCase = true)
+            val matchesAuthority = dataSpec.uri.authority == baseUrlUri?.authority
 
-            if (dataSpec.uri.authority == baseUrlAuthority) {
+            if (matchesAuthority || matchesHost) {
                 val authorizationHeaderString = AuthorizationHeaderBuilder.buildHeader(
                     clientName = apiClient.clientInfo.name,
                     clientVersion = apiClient.clientInfo.version,

@@ -16,47 +16,27 @@ import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.api.client.util.AuthorizationHeaderBuilder
 import org.jellyfin.sdk.model.api.ImageType
 import timber.log.Timber
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.util.UUID
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
+import javax.net.ssl.SSLException
 
 /**
  * Hilfsklasse zum Laden, Skalieren und Zwischenspeichern von Film-, Serien-
  * und Episoden-Coverbildern für die Android Auto Anzeige.
  *
- * Unterstützt sowohl HTTP als auch HTTPS (inkl. selbstsignierter Zertifikate
- * und Reverse-Proxies) sowie automatische Authorization-Header.
+ * Verwendet den standardkonformen [CarUrlHelper]-OkHttpClient (System-TLS, saubere
+ * Zertifikatsprüfung, Redirect- und DNS-Diagnose) und bietet detaillierte Fehlereinstufung
+ * für WireGuard- und Netzwerkprobleme.
  */
 class CarImageHelper(
     private val context: Context,
     private val apiClient: ApiClient,
 ) {
     private val httpClient: OkHttpClient by lazy {
-        try {
-            val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            })
-
-            val sslContext = SSLContext.getInstance("TLS").apply {
-                init(null, trustAllCerts, SecureRandom())
-            }
-
-            OkHttpClient.Builder()
-                .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
-                .hostnameVerifier { _, _ -> true }
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(15, TimeUnit.SECONDS)
-                .build()
-        } catch (e: Exception) {
-            Timber.e(e, "Jelly-Car: Fehler bei Initialisierung des SSL-toleranten OkHttpClients")
-            OkHttpClient.Builder().build()
-        }
+        CarUrlHelper.getOkHttpClient(context, "CarImageHelper")
     }
 
     // Cache für bis zu 100 Cover-Bitmaps im Arbeitsspeicher
@@ -83,6 +63,7 @@ class CarImageHelper(
             return@withContext CarIcon.Builder(IconCompat.createWithBitmap(cached)).build()
         }
 
+        var requestedUrl: String? = null
         try {
             val imageUrl = apiClient.imageApi.getItemImageUrl(
                 itemId = itemId,
@@ -98,6 +79,10 @@ class CarImageHelper(
             } else {
                 imageUrl
             }
+            requestedUrl = fullUrl
+
+            // Host-Konsistenz prüfen (z.B. base URL vs Image URL)
+            CarUrlHelper.checkHostConsistency(apiClient.baseUrl, fullUrl, "CarImageHelper")
 
             val requestBuilder = Request.Builder().url(fullUrl)
 
@@ -113,24 +98,96 @@ class CarImageHelper(
                     requestBuilder.header("Authorization", authHeader)
                     requestBuilder.header("X-Emby-Token", apiClient.accessToken ?: "")
                 } catch (e: Exception) {
-                    Timber.w(e, "Konnte AuthHeader nicht erstellen")
+                    Timber.w(e, "CarImageHelper: Konnte AuthHeader nicht erstellen")
                 }
             }
 
             val response = httpClient.newCall(requestBuilder.build()).execute()
-            if (response.isSuccessful) {
-                response.body?.byteStream()?.use { stream ->
-                    val bitmap = BitmapFactory.decodeStream(stream)
-                    if (bitmap != null) {
-                        memoryCache.put(cacheKey, bitmap)
-                        return@withContext CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build()
+            response.use { resp ->
+                when {
+                    resp.isSuccessful -> {
+                        val body = resp.body
+                        if (body == null) {
+                            Timber.w("CarImageHelper: Antwortkörper ist leer für Item $itemId (HTTP ${resp.code})")
+                            return@withContext CarIcon.Builder(IconCompat.createWithResource(context, fallbackResId)).build()
+                        }
+
+                        val bitmap = body.byteStream().use { stream ->
+                            BitmapFactory.decodeStream(stream)
+                        }
+
+                        if (bitmap != null) {
+                            memoryCache.put(cacheKey, bitmap)
+                            return@withContext CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build()
+                        } else {
+                            Timber.w("CarImageHelper: Bitmap-Dekodierung fehlgeschlagen für Item $itemId (ungültige Bilddaten)")
+                        }
+                    }
+                    resp.code == 401 -> {
+                        Timber.e("CarImageHelper: HTTP 401 Nicht autorisiert beim Laden von Item $itemId (Token ungültig/abgelaufen)")
+                    }
+                    resp.code == 403 -> {
+                        Timber.e("CarImageHelper: HTTP 403 Zugriff verweigert für Item $itemId")
+                    }
+                    resp.code == 404 -> {
+                        Timber.d("CarImageHelper: HTTP 404 Kein Bild vorhanden für Item $itemId")
+                    }
+                    resp.code >= 500 -> {
+                        Timber.e("CarImageHelper: HTTP ${resp.code} Serverfehler beim Laden von Item $itemId")
+                    }
+                    else -> {
+                        Timber.w("CarImageHelper: Bildabruf fehlgeschlagen für Item $itemId: HTTP ${resp.code} ${resp.message}")
                     }
                 }
-            } else {
-                Timber.w("Bildabruf fehlgeschlagen für Item $itemId: HTTP ${response.code}")
             }
+        } catch (e: UnknownHostException) {
+            Timber.e(
+                e,
+                "CarImageHelper: UnknownHostException für Item %s (URL=%s). " +
+                    "DNS-Auflösung über WireGuard fehlgeschlagen! DNS-Einstellungen der VPN-Verbindung prüfen.",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+            )
+        } catch (e: ConnectException) {
+            Timber.e(
+                e,
+                "CarImageHelper: ConnectException für Item %s (URL=%s). " +
+                    "Ziel nicht erreichbar! WireGuard AllowedIPs, Routing oder Serverstatus prüfen.",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+            )
+        } catch (e: SocketTimeoutException) {
+            Timber.e(
+                e,
+                "CarImageHelper: SocketTimeoutException für Item %s (URL=%s). " +
+                    "Zeitüberschreitung! Mögliche Ursachen: WireGuard MTU, Paketverlust oder Firewall.",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+            )
+        } catch (e: SSLException) {
+            Timber.e(
+                e,
+                "CarImageHelper: SSLException für Item %s (URL=%s). " +
+                    "TLS/Zertifikats-Handshake fehlgeschlagen! Gültigkeit des Server-Zertifikats und Hostnamen prüfen.",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+            )
+        } catch (e: IOException) {
+            Timber.w(
+                e,
+                "CarImageHelper: Netzwerk-IO-Fehler für Item %s (URL=%s): %s",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+                e.message,
+            )
         } catch (e: Exception) {
-            Timber.w(e, "Konnte Bild für Item $itemId nicht laden (URL evtl. HTTPS/Zertifikatsfehler)")
+            Timber.w(
+                e,
+                "CarImageHelper: Unerwarteter Fehler beim Bildladen für Item %s (URL=%s): %s",
+                itemId,
+                CarUrlHelper.redactUrl(requestedUrl),
+                e.message,
+            )
         }
 
         // Fallback-Icon aus Android-Ressourcen
