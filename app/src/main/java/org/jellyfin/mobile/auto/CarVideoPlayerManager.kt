@@ -177,10 +177,55 @@ class CarVideoPlayerManager private constructor(
     private var lastLoadedStreamUrl: String? = null
     private var lastLoadedMimeType: String? = null
 
+    private var _exoPlayer: ExoPlayer? = null
+    val exoPlayer: ExoPlayer
+        get() {
+            var player = _exoPlayer
+            if (player == null) {
+                synchronized(this) {
+                    player = _exoPlayer
+                    if (player == null) {
+                        val audioAttributes = AudioAttributes.Builder()
+                            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                            .setUsage(C.USAGE_MEDIA)
+                            .build()
+
+                        val newPlayer = ExoPlayer.Builder(context)
+                            .setMediaSourceFactory(mediaSourceFactory)
+                            .setAudioAttributes(audioAttributes, true)
+                            .setHandleAudioBecomingNoisy(true)
+                            .setWakeMode(C.WAKE_MODE_NETWORK)
+                            .build()
+
+                        _exoPlayer = newPlayer
+
+                        val targetMode = resolveScalingMode(
+                            mode = currentAspectRatio,
+                            surfaceWidth = surfaceWidth,
+                            surfaceHeight = surfaceHeight,
+                            videoWidth = currentVideoWidth,
+                            videoHeight = currentVideoHeight,
+                            pixelRatio = currentPixelWidthHeightRatio,
+                        )
+                        newPlayer.videoScalingMode = targetMode
+                        newPlayer.trackSelectionParameters = newPlayer.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                            .build()
+                        newPlayer.addListener(playerListener)
+
+                        player = newPlayer
+                    }
+                }
+            }
+            return player!!
+        }
+
     /**
      * Wendet den errechneten Skalierungsmodus synchron auf den ExoPlayer an.
+     * Wenn der Player noch nicht initialisiert wurde, wird die Berechnung aufgeschoben.
      */
     fun applyScalingMode() {
+        val player = _exoPlayer ?: return
         val targetMode = resolveScalingMode(
             mode = currentAspectRatio,
             surfaceWidth = surfaceWidth,
@@ -190,7 +235,7 @@ class CarVideoPlayerManager private constructor(
             pixelRatio = currentPixelWidthHeightRatio,
         )
         try {
-            exoPlayer.videoScalingMode = targetMode
+            player.videoScalingMode = targetMode
             Timber.i(
                 "Jelly-Car: VideoScalingMode auf %d gesetzt für Modus '%s' (Surface: %dx%d, Video: %dx%d, PixelRatio: %.2f)",
                 targetMode,
@@ -216,27 +261,6 @@ class CarVideoPlayerManager private constructor(
             Timber.i("Jelly-Car: Surface-Dimensionen aktualisiert: %dx%d", width, height)
             applyScalingMode()
         }
-    }
-
-    // ExoPlayer-Instanz optimiert für Fahrzeug-Audio und Video
-    val exoPlayer: ExoPlayer by lazy {
-        val audioAttributes = AudioAttributes.Builder()
-            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-            .setUsage(C.USAGE_MEDIA)
-            .build()
-
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setAudioAttributes(audioAttributes, true)
-            .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .build().apply {
-                applyScalingMode()
-                trackSelectionParameters = trackSelectionParameters.buildUpon()
-                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
-                    .build()
-                addListener(playerListener)
-            }
     }
 
     val mediaSession: MediaSession by lazy {
@@ -395,10 +419,11 @@ class CarVideoPlayerManager private constructor(
 
     fun addListener(listener: Listener) {
         listeners.add(listener)
+        val player = _exoPlayer
         listener.onPlaybackStateChanged(
-            exoPlayer.isPlaying,
-            exoPlayer.currentPosition,
-            exoPlayer.duration.coerceAtLeast(0),
+            player?.isPlaying == true,
+            player?.currentPosition ?: 0L,
+            (player?.duration ?: 0L).coerceAtLeast(0),
         )
         listener.onMediaItemTransition(currentItem)
     }
@@ -810,8 +835,13 @@ class CarVideoPlayerManager private constructor(
     fun stop() {
         isWaitingForSurface = false
         stopProgressReporting(true)
-        exoPlayer.stop()
-        exoPlayer.clearMediaItems()
+        val player = _exoPlayer
+        if (player != null) {
+            player.stop()
+            player.clearMediaItems()
+            player.clearVideoSurface()
+        }
+        activeSurface = null
         currentItem = null
         currentMediaSource = null
         lastLoadedStreamUrl = null
@@ -972,9 +1002,10 @@ class CarVideoPlayerManager private constructor(
     }
 
     private fun notifyPlaybackState() {
-        val isPlaying = exoPlayer.isPlaying
-        val position = exoPlayer.currentPosition
-        val duration = exoPlayer.duration.coerceAtLeast(0L)
+        val player = _exoPlayer
+        val isPlaying = player?.isPlaying == true
+        val position = player?.currentPosition ?: 0L
+        val duration = (player?.duration ?: 0L).coerceAtLeast(0L)
         listeners.forEach { it.onPlaybackStateChanged(isPlaying, position, duration) }
     }
 
@@ -985,6 +1016,7 @@ class CarVideoPlayerManager private constructor(
         } catch (e: Exception) {
             Timber.w(e, "Fehler beim Freigeben der MediaSession")
         }
-        exoPlayer.release()
+        _exoPlayer?.release()
+        _exoPlayer = null
     }
 }
