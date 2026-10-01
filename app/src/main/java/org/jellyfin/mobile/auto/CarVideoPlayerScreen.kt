@@ -166,9 +166,6 @@ class CarVideoPlayerScreen(
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
         Timber.d("Jelly-Car Sichtbarer Bereich geändert: $visibleArea")
-        if (visibleArea.width() > 0 && visibleArea.height() > 0) {
-            playerManager.updateSurfaceDimensions(visibleArea.width(), visibleArea.height())
-        }
     }
 
     override fun onStableAreaChanged(stableArea: Rect) {

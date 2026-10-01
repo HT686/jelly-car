@@ -7,7 +7,9 @@ import android.view.Surface
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
+import androidx.media3.effect.Presentation
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -112,10 +114,6 @@ class CarVideoPlayerManager private constructor(
                         val effectivePixelRatio = if (pixelRatio > 0f) pixelRatio else 1.0f
                         val videoAspect = (videoWidth.toFloat() * effectivePixelRatio) / videoHeight.toFloat()
 
-                        // Wenn der Bildschirm breiter ist als das Video (z. B. Ultrawide-Display bei 16:9):
-                        // SCALE_TO_FIT passt die Höhe auf exakt 100% an (Pillarbox links/rechts, kein Beschnitt oben/unten).
-                        // Wenn das Video breiter ist als der Bildschirm (z. B. 16:9-Display bei 2.39:1 Cinemascope-Film):
-                        // SCALE_TO_FIT_WITH_CROPPING passt die Höhe auf exakt 100% an (schneidet links/rechts ab, keine schwarzen Balken oben/unten).
                         if (surfaceAspect >= videoAspect) {
                             C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                         } else {
@@ -128,6 +126,35 @@ class CarVideoPlayerManager private constructor(
                 }
                 AspectRatioMode.FIT -> C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                 AspectRatioMode.FILL -> C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+            }
+        }
+
+        /**
+         * Erstellt den passenden Video-Effekt (Presentation), um das Video im korrekten
+         * Seitenverhältnis auf die Surface-Dimensionen des Car Hosts abzubilden.
+         *
+         * [AspectRatioMode.FIT_HEIGHT]: Passt die Höhe an den Bildschirm an, behält das
+         * Originalseitenverhältnis bei (Pillarbox für 4:3, Letterbox für 21:9 auf 16:9).
+         * Kein Dehnen, kein Überragen über obere/untere Bildschirmränder.
+         *
+         * [AspectRatioMode.FILL]: Vollbild mit proportionalem Beschnitt (Crop).
+         *
+         * [AspectRatioMode.FIT]: Vollbild gestreckt auf 16:9 (entspricht dem alten "16:9 Fit"-Modus).
+         */
+        fun buildPresentationEffect(
+            mode: AspectRatioMode,
+            surfaceWidth: Int,
+            surfaceHeight: Int,
+        ): Effect {
+            val layout = when (mode) {
+                AspectRatioMode.FIT_HEIGHT -> Presentation.LAYOUT_SCALE_TO_FIT
+                AspectRatioMode.FILL -> Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                AspectRatioMode.FIT -> Presentation.LAYOUT_STRETCH_TO_FIT
+            }
+            return if (surfaceWidth > 0 && surfaceHeight > 0) {
+                Presentation.createForWidthAndHeight(surfaceWidth, surfaceHeight, layout)
+            } else {
+                Presentation.createForAspectRatio(16f / 9f, layout)
             }
         }
     }
@@ -208,6 +235,18 @@ class CarVideoPlayerManager private constructor(
                             pixelRatio = currentPixelWidthHeightRatio,
                         )
                         newPlayer.videoScalingMode = targetMode
+
+                        val initialEffect = buildPresentationEffect(
+                            mode = currentAspectRatio,
+                            surfaceWidth = surfaceWidth,
+                            surfaceHeight = surfaceHeight,
+                        )
+                        try {
+                            newPlayer.setVideoEffects(listOf(initialEffect))
+                        } catch (e: Exception) {
+                            Timber.w(e, "Konnte initiale VideoEffects nicht setzen")
+                        }
+
                         newPlayer.trackSelectionParameters = newPlayer.trackSelectionParameters.buildUpon()
                             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
                             .build()
@@ -236,8 +275,19 @@ class CarVideoPlayerManager private constructor(
         )
         try {
             player.videoScalingMode = targetMode
+        } catch (e: Exception) {
+            Timber.w(e, "Konnte videoScalingMode nicht setzen")
+        }
+
+        try {
+            val effect = buildPresentationEffect(
+                mode = currentAspectRatio,
+                surfaceWidth = surfaceWidth,
+                surfaceHeight = surfaceHeight,
+            )
+            player.setVideoEffects(listOf(effect))
             Timber.i(
-                "Jelly-Car: VideoScalingMode auf %d gesetzt für Modus '%s' (Surface: %dx%d, Video: %dx%d, PixelRatio: %.2f)",
+                "Jelly-Car: ScalingMode=%d und PresentationEffect(%s) angewendet (Surface: %dx%d, Video: %dx%d, PixelRatio: %.2f)",
                 targetMode,
                 currentAspectRatio.displayName,
                 surfaceWidth,
@@ -247,7 +297,7 @@ class CarVideoPlayerManager private constructor(
                 currentPixelWidthHeightRatio,
             )
         } catch (e: Exception) {
-            Timber.w(e, "Konnte videoScalingMode nicht setzen")
+            Timber.w(e, "Konnte VideoEffects nicht setzen")
         }
     }
 

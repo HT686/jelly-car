@@ -138,6 +138,7 @@ androidx-media3-session = { module = "androidx.media3:media3-session", version.r
 androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "androidx-media3" }
 androidx-media3-exoplayer-hls = { module = "androidx.media3:media3-exoplayer-hls", version.ref = "androidx-media3" }
 androidx-media3-datasource-okhttp = { module = "androidx.media3:media3-datasource-okhttp", version.ref = "androidx-media3" }
+androidx-media3-effect = { module = "androidx.media3:media3-effect", version.ref = "androidx-media3" }
 androidx-media3-cast = { module = "androidx.media3:media3-cast", version.ref = "androidx-media3" }
 playservices-cast = { group = "com.google.android.gms", name = "play-services-cast", version.ref = "playservices" }
 playservices-castframework = { group = "com.google.android.gms", name = "play-services-cast-framework", version.ref = "playservices" }
@@ -196,6 +197,7 @@ androidx-media3 = [
     "androidx-media3-exoplayer",
     "androidx-media3-exoplayer-hls",
     "androidx-media3-datasource-okhttp",
+    "androidx-media3-effect",
     "jellyfin-androidx-media3-ffmpeg-decoder",
 ]
 playservices = [
