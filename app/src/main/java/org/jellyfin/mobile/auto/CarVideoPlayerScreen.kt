@@ -147,7 +147,7 @@ class CarVideoPlayerScreen(
                 CarToast.LENGTH_SHORT,
             ).show()
         }
-        playerManager.setSurface(surface)
+        playerManager.setSurface(surface, surfaceContainer.width, surfaceContainer.height)
     }
 
     override fun onSurfaceDestroyed(surfaceContainer: SurfaceContainer) {
@@ -161,11 +161,14 @@ class CarVideoPlayerScreen(
             surfaceContainer.height,
         )
         Timber.i("Jelly-Car: Trenne Surface via playerManager.setSurface(null)")
-        playerManager.setSurface(null)
+        playerManager.setSurface(null, 0, 0)
     }
 
     override fun onVisibleAreaChanged(visibleArea: Rect) {
         Timber.d("Jelly-Car Sichtbarer Bereich geändert: $visibleArea")
+        if (visibleArea.width() > 0 && visibleArea.height() > 0) {
+            playerManager.updateSurfaceDimensions(visibleArea.width(), visibleArea.height())
+        }
     }
 
     override fun onStableAreaChanged(stableArea: Rect) {

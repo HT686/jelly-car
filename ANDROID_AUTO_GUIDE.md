@@ -31,7 +31,7 @@ Standardmäßig erlaubt Google in Android Auto für offizielle Play Store Apps n
 **Jelly-Car** umgeht diese Beschränkung für den **privaten Sideloading-Einsatz**:
 - **Echte Videoprojektion auf das Car-Display:** Filme, TV-Serien, Episoden und Videos werden direkt auf dem Fahrzeugdisplay wiedergegeben.
 - **Vollwertige Touch-Bedienoberfläche:** Übersicht für *Weiter ansehen*, *Filme*, *Serien*, *Staffeln*, *Episoden*, *Neueste Videos* und *Suche*.
-- **Vollständige Player-Steuerung:** Play/Pause, 10s Rücklauf, 30s Vorlauf, Format-Umschaltung (16:9 Fit / Crop Fill), Audiospur-Auswahl und Touchscreen-Gesten.
+- **Vollständige Player-Steuerung:** Play/Pause, 10s Rücklauf, 30s Vorlauf, Format-Umschaltung (Höhe anpassen [Standard] / 16:9 Fit / Fill Crop), Audiospur-Auswahl und Touchscreen-Gesten.
 - **Server-Synchronisation:** Nahtlose Synchronisation mit dem heimischen Jellyfin-Server (Start, 10s-Fortschritts-Ticks, Stop, Status „Gesehen“ und Resume-Punkte).
 
 ---
@@ -137,7 +137,7 @@ Auf dem Auto-Display stehen dir folgende Ansichten zur Verfügung:
     - `⏯`: Pause / Weiter
     - `⏩ +30s`: 30 Sekunden vorspringen
   - **Sekundäre Leiste:**
-    - **16:9 Fit / Crop Fill:** Wechselt das Bildseitenverhältnis für Breitbild oder Vollbild.
+    - **Höhe anpassen / 16:9 Fit / Fill Crop:** Wechselt das Bildformat. Standard ist *Höhe anpassen* (optimale Anpassung an die Displayhöhe ohne vertikales Abschneiden von Gesichtern oder Untertiteln).
     - **Audiospuren:** Wählt zwischen verschiedenen Sprachen und Tonspuren (Stereo, 5.1).
     - **Stop:** Beendet die Wiedergabe und kehrt zur Mediathek zurück.
 

@@ -16,10 +16,10 @@
 - 🚗 **Fahrzeug-optimierte Touch-Oberfläche:**
   - **Dashboard:** Direkter Zugriff auf *Weiter ansehen*, *Filme*, *Serien*, *Neueste Videos* und *Suche*.
   - **Detailansicht:** Metadaten, Laufzeiten, Beschreibungen sowie 1-Klick-Fortsetzen oder Neustarten.
-  - **Player-Steuerung:** Play/Pause, 10s-Rücklauf, 30s-Vorlauf, Formatumschaltung (16:9 Fit / Crop Fill), Audiospur-Auswahl und Touchscreen-Gesten.
+  - **Player-Steuerung:** Play/Pause, 10s-Rücklauf, 30s-Vorlauf, Formatumschaltung (Höhe anpassen [Standard] / 16:9 Fit / Fill Crop), Audiospur-Auswahl und Touchscreen-Gesten.
 - 🔄 **Jellyfin-Server Synchronisation:** Vollständiges Reporting des Wiedergabestatus (Start, 10-Sekunden-Fortschrittstick, Stop und "Als gesehen markieren"). Angefangene Videos im Auto können nahtlos zuhause am Fernseher oder PC fortgesetzt werden!
 - 🔍 **In-Car Suche:** Schnelle Suche nach Filmen und Serien per Spracheingabe oder Tastatur im Fahrzeug.
-- 📻 **Dual-Mode Kompatibilität:** Funktioniert sowohl im visuellen Video-Modus als auch über den Standard-MediaBrowser für Audioausgabe.
+- 🎯 **Fokussierte Video-Projektion:** Direkte Hardware-Oberflächen-Projektion ohne störende Audio-Browser-Konflikte.
 
 ---
 

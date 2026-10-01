@@ -14,12 +14,14 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.session.MediaSession
 import org.jellyfin.mobile.ui.content.ImageProvider
 import org.jellyfin.sdk.model.api.ImageType
+import org.jellyfin.sdk.model.api.MediaStreamType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -90,6 +92,44 @@ class CarVideoPlayerManager private constructor(
                 ).also { instance = it }
             }
         }
+
+        /**
+         * Berechnet den optimalen ExoPlayer-Videocaling-Modus basierend auf dem gewählten
+         * Bildformat und den tatsächlichen Dimensionen von Bildschirm und Video.
+         */
+        fun resolveScalingMode(
+            mode: AspectRatioMode,
+            surfaceWidth: Int,
+            surfaceHeight: Int,
+            videoWidth: Int,
+            videoHeight: Int,
+            pixelRatio: Float = 1.0f,
+        ): Int {
+            return when (mode) {
+                AspectRatioMode.FIT_HEIGHT -> {
+                    if (surfaceWidth > 0 && surfaceHeight > 0 && videoWidth > 0 && videoHeight > 0) {
+                        val surfaceAspect = surfaceWidth.toFloat() / surfaceHeight.toFloat()
+                        val effectivePixelRatio = if (pixelRatio > 0f) pixelRatio else 1.0f
+                        val videoAspect = (videoWidth.toFloat() * effectivePixelRatio) / videoHeight.toFloat()
+
+                        // Wenn der Bildschirm breiter ist als das Video (z. B. Ultrawide-Display bei 16:9):
+                        // SCALE_TO_FIT passt die Höhe auf exakt 100% an (Pillarbox links/rechts, kein Beschnitt oben/unten).
+                        // Wenn das Video breiter ist als der Bildschirm (z. B. 16:9-Display bei 2.39:1 Cinemascope-Film):
+                        // SCALE_TO_FIT_WITH_CROPPING passt die Höhe auf exakt 100% an (schneidet links/rechts ab, keine schwarzen Balken oben/unten).
+                        if (surfaceAspect >= videoAspect) {
+                            C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                        } else {
+                            C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+                        }
+                    } else {
+                        // Standard-Fallback bevor Dimensionen feststehen
+                        C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                    }
+                }
+                AspectRatioMode.FIT -> C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                AspectRatioMode.FILL -> C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+            }
+        }
     }
 
     interface Listener {
@@ -98,9 +138,10 @@ class CarVideoPlayerManager private constructor(
         fun onError(message: String)
     }
 
-    enum class AspectRatioMode(val displayName: String, val scalingMode: Int) {
-        FIT("16:9 Fit", C.VIDEO_SCALING_MODE_SCALE_TO_FIT),
-        FILL("Fill (Crop)", C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING),
+    enum class AspectRatioMode(val displayName: String) {
+        FIT_HEIGHT("Höhe anpassen"),
+        FIT("16:9 Fit"),
+        FILL("Fill (Crop)"),
     }
 
     private val deviceProfileBuilder: DeviceProfileBuilder by inject()
@@ -114,7 +155,18 @@ class CarVideoPlayerManager private constructor(
         private set
     var currentMediaSource: RemoteJellyfinMediaSource? = null
         private set
-    var currentAspectRatio: AspectRatioMode = AspectRatioMode.FIT
+    var currentAspectRatio: AspectRatioMode = AspectRatioMode.FIT_HEIGHT
+        private set
+
+    var surfaceWidth: Int = 0
+        private set
+    var surfaceHeight: Int = 0
+        private set
+    var currentVideoWidth: Int = 0
+        private set
+    var currentVideoHeight: Int = 0
+        private set
+    var currentPixelWidthHeightRatio: Float = 1.0f
         private set
 
     private var currentRetryLevel = 0
@@ -124,6 +176,47 @@ class CarVideoPlayerManager private constructor(
     private var isWaitingForSurface = false
     private var lastLoadedStreamUrl: String? = null
     private var lastLoadedMimeType: String? = null
+
+    /**
+     * Wendet den errechneten Skalierungsmodus synchron auf den ExoPlayer an.
+     */
+    fun applyScalingMode() {
+        val targetMode = resolveScalingMode(
+            mode = currentAspectRatio,
+            surfaceWidth = surfaceWidth,
+            surfaceHeight = surfaceHeight,
+            videoWidth = currentVideoWidth,
+            videoHeight = currentVideoHeight,
+            pixelRatio = currentPixelWidthHeightRatio,
+        )
+        try {
+            exoPlayer.videoScalingMode = targetMode
+            Timber.i(
+                "Jelly-Car: VideoScalingMode auf %d gesetzt für Modus '%s' (Surface: %dx%d, Video: %dx%d, PixelRatio: %.2f)",
+                targetMode,
+                currentAspectRatio.displayName,
+                surfaceWidth,
+                surfaceHeight,
+                currentVideoWidth,
+                currentVideoHeight,
+                currentPixelWidthHeightRatio,
+            )
+        } catch (e: Exception) {
+            Timber.w(e, "Konnte videoScalingMode nicht setzen")
+        }
+    }
+
+    /**
+     * Aktualisiert bekannte Display-/Surface-Dimensionen und berechnet das Seitenverhältnis neu.
+     */
+    fun updateSurfaceDimensions(width: Int, height: Int) {
+        if (width > 0 && height > 0 && (width != surfaceWidth || height != surfaceHeight)) {
+            surfaceWidth = width
+            surfaceHeight = height
+            Timber.i("Jelly-Car: Surface-Dimensionen aktualisiert: %dx%d", width, height)
+            applyScalingMode()
+        }
+    }
 
     // ExoPlayer-Instanz optimiert für Fahrzeug-Audio und Video
     val exoPlayer: ExoPlayer by lazy {
@@ -138,7 +231,7 @@ class CarVideoPlayerManager private constructor(
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build().apply {
-                videoScalingMode = currentAspectRatio.scalingMode
+                applyScalingMode()
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
                     .build()
@@ -170,6 +263,22 @@ class CarVideoPlayerManager private constructor(
     }
 
     private val playerListener = object : Player.Listener {
+        override fun onVideoSizeChanged(videoSize: VideoSize) {
+            super.onVideoSizeChanged(videoSize)
+            if (videoSize.width > 0 && videoSize.height > 0) {
+                currentVideoWidth = videoSize.width
+                currentVideoHeight = videoSize.height
+                currentPixelWidthHeightRatio = videoSize.pixelWidthHeightRatio
+                Timber.i(
+                    "Jelly-Car: onVideoSizeChanged: %dx%d (pixelRatio=%.2f)",
+                    videoSize.width,
+                    videoSize.height,
+                    videoSize.pixelWidthHeightRatio,
+                )
+                applyScalingMode()
+            }
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             notifyPlaybackState()
             if (isPlaying) {
@@ -303,28 +412,34 @@ class CarVideoPlayerManager private constructor(
      * Stellt sicher, dass das Binding synchron auf dem Main-Thread erfolgt und wartendes
      * Playback erst nach erfolgreicher Surface-Bindung gestartet wird.
      */
-    fun setSurface(surface: Surface?) {
+    fun setSurface(surface: Surface?, width: Int = 0, height: Int = 0) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            applySurface(surface)
+            applySurface(surface, width, height)
         } else {
             scope.launch(Dispatchers.Main) {
-                applySurface(surface)
+                applySurface(surface, width, height)
             }
         }
     }
 
-    private fun applySurface(surface: Surface?) {
+    private fun applySurface(surface: Surface?, width: Int = 0, height: Int = 0) {
         val isValid = surface != null && surface.isValid
+        if (width > 0 && height > 0) {
+            surfaceWidth = width
+            surfaceHeight = height
+        }
         Timber.i(
-            "Jelly-Car: applySurface: surface=%s, valid=%b, isWaitingForSurface=%b",
+            "Jelly-Car: applySurface: surface=%s, valid=%b, isWaitingForSurface=%b, size=%dx%d",
             surface,
             isValid,
             isWaitingForSurface,
+            surfaceWidth,
+            surfaceHeight,
         )
         activeSurface = surface
         if (surface != null && surface.isValid) {
             exoPlayer.setVideoSurface(surface)
-            exoPlayer.videoScalingMode = currentAspectRatio.scalingMode
+            applyScalingMode()
             if (isWaitingForSurface) {
                 Timber.i("Jelly-Car: Surface eingetroffen! Starte nun zuvor wartende Videowiedergabe für ${currentItem?.name}")
                 isWaitingForSurface = false
@@ -354,6 +469,16 @@ class CarVideoPlayerManager private constructor(
         currentItem = item
         currentStartPositionMs = startPositionMs
         currentRetryLevel = retryLevel
+
+        // Video-Dimensionen aus Metadaten vorab ermitteln, falls vorhanden
+        val videoStream = item.mediaStreams?.firstOrNull { it.type == MediaStreamType.VIDEO }
+        if (videoStream?.width != null && videoStream.height != null) {
+            currentVideoWidth = videoStream.width!!
+            currentVideoHeight = videoStream.height!!
+            Timber.i("Jelly-Car: Vorab Video-Dimensionen aus Metadaten: %dx%d", currentVideoWidth, currentVideoHeight)
+            applyScalingMode()
+        }
+
         if (retryLevel == 0) {
             listeners.forEach { it.onMediaItemTransition(item) }
         }
@@ -533,7 +658,7 @@ class CarVideoPlayerManager private constructor(
                 Timber.i("Jelly-Car: Verbinde aktives Surface vor prepare an ExoPlayer: %s", surface)
                 isWaitingForSurface = false
                 exoPlayer.setVideoSurface(surface)
-                exoPlayer.videoScalingMode = currentAspectRatio.scalingMode
+                applyScalingMode()
                 exoPlayer.prepare()
                 exoPlayer.play()
                 reportPlaybackStart(item, remoteSource, startPositionMs)
@@ -604,7 +729,7 @@ class CarVideoPlayerManager private constructor(
                 Timber.i("Jelly-Car Fallback: Verbinde aktives Surface vor prepare an ExoPlayer: %s", surface)
                 isWaitingForSurface = false
                 exoPlayer.setVideoSurface(surface)
-                exoPlayer.videoScalingMode = currentAspectRatio.scalingMode
+                applyScalingMode()
                 exoPlayer.prepare()
                 exoPlayer.play()
                 reportPlaybackStart(item, null, startPositionMs)
@@ -667,14 +792,15 @@ class CarVideoPlayerManager private constructor(
     }
 
     /**
-     * Wechselt zwischen Bildformaten (16:9 Fit oder Fill Crop).
+     * Wechselt zwischen Bildformaten: Höhe anpassen (Standard), 16:9 Fit oder Fill (Crop).
      */
     fun cycleAspectRatio(): AspectRatioMode {
         currentAspectRatio = when (currentAspectRatio) {
+            AspectRatioMode.FIT_HEIGHT -> AspectRatioMode.FIT
             AspectRatioMode.FIT -> AspectRatioMode.FILL
-            AspectRatioMode.FILL -> AspectRatioMode.FIT
+            AspectRatioMode.FILL -> AspectRatioMode.FIT_HEIGHT
         }
-        exoPlayer.videoScalingMode = currentAspectRatio.scalingMode
+        applyScalingMode()
         return currentAspectRatio
     }
 
@@ -690,6 +816,9 @@ class CarVideoPlayerManager private constructor(
         currentMediaSource = null
         lastLoadedStreamUrl = null
         lastLoadedMimeType = null
+        currentVideoWidth = 0
+        currentVideoHeight = 0
+        currentPixelWidthHeightRatio = 1.0f
         notifyPlaybackState()
     }
 
