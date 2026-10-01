@@ -60,7 +60,7 @@ class CarMainScreen(
 
             try {
                 val views = withContext(Dispatchers.IO) {
-                    apiClient.userViewsApi.getUserViews().content.items ?: emptyList()
+                    apiClient.userViewsApi.getUserViews().content.items
                 }
                 // Nur video-relevante Mediatheken filtern
                 videoLibraries = views.filter {
@@ -101,27 +101,7 @@ class CarMainScreen(
 
         val listBuilder = ItemList.Builder()
 
-        // 1. Musik-Bereich (Interpreten, Alben, Titel, Playlists, Favoriten)
-        val musicIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_music_note_white_24dp)).build()
-        listBuilder.addItem(
-            Row.Builder()
-                .setTitle("Musik")
-                .addText("Interpreten, Alben, Titel & Playlists")
-                .setImage(musicIcon)
-                .setOnClickListener {
-                    screenManager.push(
-                        CarMusicScreen(
-                            carContext,
-                            apiClient,
-                            playerManager,
-                            imageHelper,
-                        )
-                    )
-                }
-                .build()
-        )
-
-        // 2. Serien
+        // 1. Serien
         val seriesIcon = CarIcon.Builder(IconCompat.createWithResource(carContext, R.drawable.ic_tv_series)).build()
         listBuilder.addItem(
             Row.Builder()
@@ -264,17 +244,12 @@ class CarMainScreen(
         // Header mit Such- und Wiedergabe-Aktion
         val actionStripBuilder = ActionStrip.Builder()
         if (playerManager.currentItem != null) {
-            val isAudio = playerManager.currentItem?.type == BaseItemKind.AUDIO
             actionStripBuilder.addAction(
                 Action.Builder()
                     .setTitle("Wiedergabe")
                     .setOnClickListener {
-                        if (isAudio) {
-                            screenManager.push(CarAudioPlayerScreen(carContext, apiClient, playerManager, imageHelper))
-                        } else {
-                            playerManager.currentItem?.let {
-                                screenManager.push(CarVideoPlayerScreen(carContext, playerManager, it))
-                            }
+                        playerManager.currentItem?.let {
+                            screenManager.push(CarVideoPlayerScreen(carContext, playerManager, it))
                         }
                     }
                     .build()

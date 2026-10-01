@@ -11,7 +11,7 @@ Willkommen bei **Jelly-Car**, einem spezialisierten Fork von Jellyfin für Andro
    - [CarAppService & Navigation Category](#carappservice--navigation-category)
    - [Hardware Surface Video Rendering mit ExoPlayer](#hardware-surface-video-rendering-mit-exoplayer)
    - [Jellyfin Server-Synchronisation (PlayState)](#jellyfin-server-synchronisation-playstate)
-   - [Duale Medienunterstützung (Video & Audio)](#duale-medienunterstützung-video--audio)
+   - [Fokussierte Video-Architektur (Keine Audio-Konflikte)](#fokussierte-video-architektur-keine-audio-konflikte)
 3. [Schritt-für-Schritt Sideloading-Anleitung](#schritt-für-schritt-sideloading-anleitung)
    - [Voraussetzungen](#voraussetzungen)
    - [Schritt 1: Android Auto Entwickleroptionen freischalten](#schritt-1-android-auto-entwickleroptionen-freischalten)
@@ -76,8 +76,8 @@ Jelly-Car synchronisiert den Wiedergabestatus in Echtzeit mit deinem Jellyfin Se
 3. **Stop / Pause:** `apiClient.playStateApi.reportPlaybackStopped(...)` speichert die genaue Wiedergabeposition.
 4. **Ende:** Wenn der Film oder die Folge endet (`Player.STATE_ENDED`), wird `apiClient.playStateApi.markPlayedItem(...)` aufgerufen, sodass der Inhalt als gesehen markiert wird.
 
-### Duale Medienunterstützung (Video & Audio)
-Neben der visuellen Car-App unterstützt Jelly-Car auch den klassischen Android Auto Media Browser (`LibraryService`). Auch dort stehen Film- und Serienbibliotheken zur Verfügung, sodass Videos bei Bedarf auch als reine Audio-Streams (z. B. Konzerte, Video-Podcasts) über das normale Media-Interface des Autos gehört werden können.
+### Fokussierte Video-Architektur (Keine Audio-Konflikte)
+Jelly-Car ist vollständig und kompromisslos auf Video fokussiert (Filme, Serien, TV-Episoden, Live-TV). Um Konflikte in Android Auto zu vermeiden – bei denen das System versuchen könnte, Videos über einen reinen Audio-Hintergrunddienst ohne Hardware-Surface abzuspielen –, wurde der separate MediaBrowserService entfernt. Alle Medien werden nativ über `CarVideoAppService` auf der Hardware-Oberfläche des Car-Displays gerendert, während Audio über das Bordsystem ausgegeben wird.
 
 ---
 

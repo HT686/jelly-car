@@ -2,10 +2,9 @@ package org.jellyfin.mobile.sessionbrowser
 
 import android.net.Uri
 import androidx.annotation.DrawableRes
-import androidx.core.net.toUri
 import org.jellyfin.mobile.R
+import org.jellyfin.mobile.ui.content.ImageProvider
 import org.jellyfin.sdk.api.client.ApiClient
-import org.jellyfin.sdk.api.client.extensions.imageApi
 import org.jellyfin.sdk.model.api.BaseItemDto
 import org.jellyfin.sdk.model.api.ImageType
 
@@ -49,27 +48,23 @@ sealed interface LibraryPageElement {
             action = action,
         )
 
-        private fun BaseItemDto.getImage(api: ApiClient): Uri? {
+        private fun BaseItemDto.getImage(api: ApiClient? = null): Uri? {
             val primaryImageTag = imageTags?.get(ImageType.PRIMARY)
 
             return when {
-                primaryImageTag != null -> api.imageApi.getItemImageUrl(
-                    itemId = id,
-                    imageType = ImageType.PRIMARY,
-                    tag = primaryImageTag,
-                ).toUri()
+                primaryImageTag != null -> ImageProvider.buildItemUri(id, ImageType.PRIMARY, primaryImageTag)
 
-                albumId != null && albumPrimaryImageTag != null -> api.imageApi.getItemImageUrl(
-                    itemId = requireNotNull(albumId),
-                    imageType = ImageType.PRIMARY,
-                    tag = albumPrimaryImageTag,
-                ).toUri()
+                albumId != null && albumPrimaryImageTag != null -> ImageProvider.buildItemUri(
+                    requireNotNull(albumId),
+                    ImageType.PRIMARY,
+                    albumPrimaryImageTag,
+                )
 
-                parentId != null && parentPrimaryImageTag != null -> api.imageApi.getItemImageUrl(
-                    itemId = requireNotNull(parentId),
-                    imageType = ImageType.PRIMARY,
-                    tag = parentPrimaryImageTag,
-                ).toUri()
+                parentId != null && parentPrimaryImageTag != null -> ImageProvider.buildItemUri(
+                    requireNotNull(parentId),
+                    ImageType.PRIMARY,
+                    parentPrimaryImageTag,
+                )
 
                 else -> null
             }

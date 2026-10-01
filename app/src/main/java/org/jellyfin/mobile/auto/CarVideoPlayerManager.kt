@@ -8,6 +8,7 @@ import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -16,6 +17,9 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.session.MediaSession
+import org.jellyfin.mobile.ui.content.ImageProvider
+import org.jellyfin.sdk.model.api.ImageType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -28,7 +32,6 @@ import org.jellyfin.mobile.player.source.MediaSourceResolver
 import org.jellyfin.mobile.player.source.RemoteJellyfinMediaSource
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.extensions.playStateApi
-import org.jellyfin.sdk.api.client.extensions.universalAudioApi
 import org.jellyfin.sdk.api.client.extensions.userLibraryApi
 import org.jellyfin.sdk.api.client.extensions.videosApi
 import org.jellyfin.sdk.model.api.BaseItemDto
@@ -114,16 +117,8 @@ class CarVideoPlayerManager private constructor(
     var currentAspectRatio: AspectRatioMode = AspectRatioMode.FIT
         private set
 
-    var playbackQueue: List<BaseItemDto> = emptyList()
-        private set
-    var queueIndex: Int = -1
-        private set
-
     private var currentRetryLevel = 0
     private var currentStartPositionMs = 0L
-
-    fun hasNext(): Boolean = queueIndex in playbackQueue.indices && queueIndex < playbackQueue.lastIndex
-    fun hasPrevious(): Boolean = queueIndex > 0
 
     private var activeSurface: Surface? = null
     private var isWaitingForSurface = false
@@ -151,6 +146,29 @@ class CarVideoPlayerManager private constructor(
             }
     }
 
+    val mediaSession: MediaSession by lazy {
+        MediaSession.Builder(context, exoPlayer)
+            .setId("CarVideoPlayerSession")
+            .build()
+    }
+
+    private fun buildMediaMetadata(item: BaseItemDto): MediaMetadata {
+        val metadataBuilder = MediaMetadata.Builder()
+            .setTitle(item.name)
+            .setArtist(item.artists?.joinToString() ?: item.seriesName ?: item.albumArtist)
+            .setAlbumTitle(item.seasonName ?: item.album)
+
+        val primaryImageTag = item.imageTags?.get(ImageType.PRIMARY)
+        if (primaryImageTag != null) {
+            try {
+                metadataBuilder.setArtworkUri(ImageProvider.buildItemUri(item.id, ImageType.PRIMARY, primaryImageTag))
+            } catch (e: Exception) {
+                Timber.w(e, "Konnte Bild-URI für MediaMetadata nicht erstellen")
+            }
+        }
+        return metadataBuilder.build()
+    }
+
     private val playerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             notifyPlaybackState()
@@ -175,12 +193,11 @@ class CarVideoPlayerManager private constructor(
 
         override fun onPlayerError(error: PlaybackException) {
             val item = currentItem
-            val isAudio = item?.type == BaseItemKind.AUDIO || item?.mediaType == MediaType.AUDIO
             val streamUrlRedacted = CarUrlHelper.redactUrl(lastLoadedStreamUrl)
 
             Timber.e(
                 error,
-                "Jelly-Car Player Fehler: code=%d (%s), message='%s', cause='%s', item='%s' (id=%s, isAudio=%b), " +
+                "Jelly-Car Video Player Fehler: code=%d (%s), message='%s', cause='%s', item='%s' (id=%s), " +
                     "playMethod=%s, mime=%s, url=%s, surfacePresent=%b, surfaceValid=%b, playerState=%d",
                 error.errorCode,
                 error.errorCodeName,
@@ -188,7 +205,6 @@ class CarVideoPlayerManager private constructor(
                 error.cause?.message,
                 item?.name,
                 item?.id,
-                isAudio,
                 currentMediaSource?.playMethod,
                 lastLoadedMimeType,
                 streamUrlRedacted,
@@ -198,10 +214,10 @@ class CarVideoPlayerManager private constructor(
             )
 
             // Falls Video mit Fehler fehlschlägt und noch nicht alle Retries aufgebraucht sind
-            if (!isAudio && item != null && currentRetryLevel < 3) {
+            if (item != null && currentRetryLevel < 3) {
                 Timber.w("Versuche automatischen Fallback-Retry für Video (Stufe ${currentRetryLevel + 1})")
                 val resumePos = exoPlayer.currentPosition.coerceAtLeast(currentStartPositionMs)
-                playMedia(item, resumePos, currentRetryLevel + 1)
+                playVideo(item, resumePos, currentRetryLevel + 1)
                 return
             }
 
@@ -318,8 +334,7 @@ class CarVideoPlayerManager private constructor(
             }
         } else {
             exoPlayer.clearVideoSurface()
-            val isAudio = currentItem?.type == BaseItemKind.AUDIO || currentItem?.mediaType == MediaType.AUDIO
-            if (!isAudio && exoPlayer.isPlaying) {
+            if (exoPlayer.isPlaying) {
                 Timber.i("Jelly-Car: Surface entfernt -> Pausiere Videowiedergabe, damit Ton nicht ohne Bild weiterläuft")
                 exoPlayer.pause()
                 isWaitingForSurface = true
@@ -327,44 +342,15 @@ class CarVideoPlayerManager private constructor(
         }
     }
 
-    fun playQueue(items: List<BaseItemDto>, startIndex: Int = 0) {
-        if (items.isEmpty()) return
-        playbackQueue = items
-        queueIndex = startIndex.coerceIn(items.indices)
-        playMedia(items[queueIndex], 0L)
-    }
-
-    fun playNext() {
-        if (hasNext()) {
-            queueIndex++
-            playMedia(playbackQueue[queueIndex], 0L)
-        }
-    }
-
-    fun playPrevious() {
-        if (hasPrevious()) {
-            queueIndex--
-            playMedia(playbackQueue[queueIndex], 0L)
-        }
-    }
-
     /**
-     * Startet die Wiedergabe eines Films, einer Episode oder eines Videos.
+     * Startet die Wiedergabe eines Films, einer Episode oder eines Live-TV-Senders.
      *
      * @param item Das Jellyfin BaseItemDto
      * @param startPositionMs Startposition in Millisekunden (z. B. für "Weiter ansehen")
+     * @param retryLevel Fallback-Stufe bei Fehlern
      */
-    fun playVideo(item: BaseItemDto, startPositionMs: Long = 0L) {
-        playbackQueue = listOf(item)
-        queueIndex = 0
-        playMedia(item, startPositionMs, retryLevel = 0)
-    }
-
-    /**
-     * Startet die Wiedergabe eines beliebigen Mediums (Audio oder Video).
-     */
-    fun playMedia(item: BaseItemDto, startPositionMs: Long = 0L, retryLevel: Int = 0) {
-        Timber.i("Jelly-Car: Starte Wiedergabe für Item: ${item.name} (${item.id}) bei ${startPositionMs}ms (retryLevel: $retryLevel)")
+    fun playVideo(item: BaseItemDto, startPositionMs: Long = 0L, retryLevel: Int = 0) {
+        Timber.i("Jelly-Car: Starte Videowiedergabe für Item: ${item.name} (${item.id}) bei ${startPositionMs}ms (retryLevel: $retryLevel)")
         currentItem = item
         currentStartPositionMs = startPositionMs
         currentRetryLevel = retryLevel
@@ -372,69 +358,18 @@ class CarVideoPlayerManager private constructor(
             listeners.forEach { it.onMediaItemTransition(item) }
         }
 
-        val isAudio = item.type == BaseItemKind.AUDIO || item.mediaType == MediaType.AUDIO
-
         scope.launch {
             try {
-                if (isAudio) {
-                    playAudioInternal(item, startPositionMs)
-                } else {
-                    playVideoInternal(item, startPositionMs, retryLevel)
-                }
+                playVideoInternal(item, startPositionMs, retryLevel)
             } catch (e: Exception) {
-                Timber.e(e, "Fehler beim Vorbereiten des Medien-Streams")
+                Timber.e(e, "Fehler beim Vorbereiten des Video-Streams")
                 listeners.forEach { it.onError("Fehler beim Laden: ${e.localizedMessage}") }
             }
         }
     }
 
-    private suspend fun playAudioInternal(item: BaseItemDto, startPositionMs: Long) {
-        val apiKey = apiClient.accessToken
-        val deviceId = apiClient.deviceInfo.id
-
-        // Für reine Audio-Wiedergabe verwenden wir die universalAudioApi
-        val audioUrl = apiClient.universalAudioApi.getUniversalAudioStreamUrl(
-            itemId = item.id,
-            deviceId = deviceId,
-            maxStreamingBitrate = 140000000,
-            container = listOf(
-                "opus",
-                "mp3|mp3",
-                "aac",
-                "m4a",
-                "m4b|aac",
-                "flac",
-                "webma",
-                "webm",
-                "wav",
-                "ogg",
-            ),
-            transcodingProtocol = MediaStreamProtocol.HLS,
-            transcodingContainer = "ts",
-            audioCodec = "aac",
-            enableRemoteMedia = true,
-        )
-        val finalUrl = appendAuthParam(audioUrl, apiKey)
-        lastLoadedStreamUrl = finalUrl
-        lastLoadedMimeType = if (finalUrl.contains(".m3u8", ignoreCase = true)) MimeTypes.APPLICATION_M3U8 else null
-
-        CarUrlHelper.checkHostConsistency(apiClient.baseUrl, finalUrl, "CarAudioPlayer")
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(finalUrl.toUri())
-            .setMediaId(item.id.toString())
-            .build()
-
-        val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
-        exoPlayer.setMediaSource(mediaSource)
-        if (startPositionMs > 0L) {
-            exoPlayer.seekTo(startPositionMs)
-        }
-        exoPlayer.prepare()
-        exoPlayer.play()
-
-        reportPlaybackStart(item, null, startPositionMs)
-        startProgressReporting()
+    fun playMedia(item: BaseItemDto, startPositionMs: Long = 0L, retryLevel: Int = 0) {
+        playVideo(item, startPositionMs, retryLevel)
     }
 
     private suspend fun playVideoInternal(item: BaseItemDto, startPositionMs: Long, retryLevel: Int) {
@@ -564,6 +499,7 @@ class CarVideoPlayerManager private constructor(
         val mediaItemBuilder = MediaItem.Builder()
             .setUri(finalUrl.toUri())
             .setMediaId(item.id.toString())
+            .setMediaMetadata(buildMediaMetadata(item))
 
         if (effectiveMimeType != null) {
             mediaItemBuilder.setMimeType(effectiveMimeType)
@@ -652,6 +588,7 @@ class CarVideoPlayerManager private constructor(
             .setUri(streamUrl.toUri())
             .setMediaId(item.id.toString())
             .setMimeType(mimeType)
+            .setMediaMetadata(buildMediaMetadata(item))
             .build()
 
         val mediaSource = mediaSourceFactory.createMediaSource(mediaItem)
@@ -903,10 +840,6 @@ class CarVideoPlayerManager private constructor(
                 Timber.w(e, "Fehler beim Markieren des Mediums als abgespielt")
             }
         }
-
-        if (hasNext()) {
-            playNext()
-        }
     }
 
     private fun notifyPlaybackState() {
@@ -918,6 +851,11 @@ class CarVideoPlayerManager private constructor(
 
     fun release() {
         stop()
+        try {
+            mediaSession.release()
+        } catch (e: Exception) {
+            Timber.w(e, "Fehler beim Freigeben der MediaSession")
+        }
         exoPlayer.release()
     }
 }

@@ -32,31 +32,11 @@ val RootLibraryPage = { api: ApiClient ->
                 )
             )
 
-            // 2. Serien
-            add(
-                LibraryPageElement.Item(
-                    title = "Serien",
-                    artist = "Staffeln & Episoden",
-                    iconRes = R.drawable.ic_tv_series,
-                    action = LibraryItemAction.Navigate(LibraryRoute.TvShowsRoot),
-                )
-            )
-
-            // 3. Filme
-            add(
-                LibraryPageElement.Item(
-                    title = "Filme",
-                    artist = "Spielfilme & Dokumentationen",
-                    iconRes = R.drawable.ic_local_movies_white_64,
-                    action = LibraryItemAction.Navigate(LibraryRoute.MoviesRoot),
-                )
-            )
-
-            // 4. Live TV
+            // 2. Live TV (Audio / Radio Stream)
             add(
                 LibraryPageElement.Item(
                     title = "Live TV",
-                    artist = "Fernsehen & Live-Streams",
+                    artist = "Fernsehen & Live-Streams (Audio)",
                     iconRes = R.drawable.ic_live_tv,
                     action = LibraryItemAction.Navigate(LibraryRoute.LiveTvRoot),
                 )
