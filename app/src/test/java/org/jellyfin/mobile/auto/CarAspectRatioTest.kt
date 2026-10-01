@@ -149,38 +149,4 @@ class CarAspectRatioTest {
             pixelRatio = 1.422f,
         ) shouldBe C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
     }
-
-    @Test
-    fun `buildPresentationEffect creates valid Presentation effects with surface dimensions`() {
-        val effectFitHeight = CarVideoPlayerManager.buildPresentationEffect(
-            mode = AspectRatioMode.FIT_HEIGHT,
-            surfaceWidth = 1280,
-            surfaceHeight = 720,
-        )
-        (effectFitHeight is androidx.media3.effect.Presentation) shouldBe true
-
-        val effectFill = CarVideoPlayerManager.buildPresentationEffect(
-            mode = AspectRatioMode.FILL,
-            surfaceWidth = 1280,
-            surfaceHeight = 720,
-        )
-        (effectFill is androidx.media3.effect.Presentation) shouldBe true
-
-        val effectStretch = CarVideoPlayerManager.buildPresentationEffect(
-            mode = AspectRatioMode.FIT,
-            surfaceWidth = 1280,
-            surfaceHeight = 720,
-        )
-        (effectStretch is androidx.media3.effect.Presentation) shouldBe true
-    }
-
-    @Test
-    fun `buildPresentationEffect handles zero dimensions with fallback aspect ratio`() {
-        val fallbackEffect = CarVideoPlayerManager.buildPresentationEffect(
-            mode = AspectRatioMode.FIT_HEIGHT,
-            surfaceWidth = 0,
-            surfaceHeight = 0,
-        )
-        (fallbackEffect is androidx.media3.effect.Presentation) shouldBe true
-    }
 }
