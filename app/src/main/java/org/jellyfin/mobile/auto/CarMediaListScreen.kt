@@ -2,10 +2,14 @@ package org.jellyfin.mobile.auto
 
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
+import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.model.Action
 import androidx.car.app.model.CarIcon
+import androidx.car.app.model.GridItem
+import androidx.car.app.model.GridTemplate
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
+import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.lifecycle.lifecycleScope
@@ -40,7 +44,10 @@ enum class MediaListType {
 }
 
 /**
- * Listenansicht für Filme, Serien, Episoden oder "Weiter ansehen" in Android Auto.
+ * Medienübersicht für Filme, Serien, Episoden oder "Weiter ansehen" in Android Auto.
+ *
+ * Bildlastige Kategorien (Filme, Serien, Neueste, Weiter ansehen) werden als
+ * Poster-Grid dargestellt; Kanäle und generische Ordner als kompakte Liste.
  */
 @UnstableApi
 class CarMediaListScreen(
@@ -56,6 +63,28 @@ class CarMediaListScreen(
     private var items: List<BaseItemDto> = emptyList()
     private val itemIcons = mutableMapOf<UUID, CarIcon>()
     private var isLoading = true
+
+    /** Bildlastige Kategorien bekommen das Poster-Grid. */
+    private val useGrid: Boolean = when (listType) {
+        MediaListType.MOVIES,
+        MediaListType.SERIES,
+        MediaListType.LATEST,
+        MediaListType.RESUME -> true
+        MediaListType.LIVE_TV,
+        MediaListType.FOLDER -> false
+    }
+
+    /** Vom Host erlaubte maximale Elementanzahl für das jeweilige Template. */
+    private val contentLimit: Int by lazy {
+        runCatching {
+            val type = if (useGrid) {
+                ConstraintManager.CONTENT_LIMIT_TYPE_GRID
+            } else {
+                ConstraintManager.CONTENT_LIMIT_TYPE_LIST
+            }
+            carContext.getCarService(ConstraintManager::class.java).getContentLimit(type)
+        }.getOrDefault(DEFAULT_CONTENT_LIMIT).coerceIn(1, MAX_CONTENT_LIMIT)
+    }
 
     init {
         loadMediaItems()
@@ -118,19 +147,30 @@ class CarMediaListScreen(
                         }
                     }
                 }
-                items = fetchedItems
+                items = fetchedItems.take(contentLimit)
 
-                // Asynchron Cover-Icons nachladen
+                // Platzhalter-Icons sofort setzen, damit jede Kachel/Zeile ein Bild hat ...
+                items.forEach { item ->
+                    itemIcons[item.id] = imageHelper.createResourceIcon(fallbackIconFor(item))
+                }
+                isLoading = false
+                invalidate()
+
+                // ... und anschließend die echten Cover asynchron nachladen.
                 launch(Dispatchers.IO) {
-                    items.take(15).forEach { item ->
-                        val icon = imageHelper.loadCarIcon(item.id, maxWidth = 150, maxHeight = 150)
+                    items.forEach { item ->
+                        val icon = imageHelper.loadCarIcon(
+                            itemId = item.id,
+                            fallbackResId = fallbackIconFor(item),
+                            maxWidth = if (useGrid) POSTER_SIZE_PX else LIST_ICON_SIZE_PX,
+                            maxHeight = if (useGrid) POSTER_SIZE_PX else LIST_ICON_SIZE_PX,
+                        )
                         itemIcons[item.id] = icon
                     }
                     invalidate()
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Fehler beim Laden der Medienliste für $screenTitle")
-            } finally {
                 isLoading = false
                 invalidate()
             }
@@ -138,58 +178,61 @@ class CarMediaListScreen(
     }
 
     override fun onGetTemplate(): Template {
+        if (!isLoading && items.isEmpty()) {
+            return MessageTemplate.Builder("Keine Videos in dieser Kategorie vorhanden")
+                .setTitle(screenTitle)
+                .setHeaderAction(Action.BACK)
+                .build()
+        }
+        return if (useGrid) buildGridTemplate() else buildListTemplate()
+    }
+
+    private fun buildGridTemplate(): Template {
+        val builder = GridTemplate.Builder()
+            .setTitle(screenTitle)
+            .setHeaderAction(Action.BACK)
+
+        if (isLoading) {
+            builder.setLoading(true)
+            return builder.build()
+        }
+
+        val listBuilder = ItemList.Builder()
+        items.forEach { item ->
+            val icon = itemIcons[item.id] ?: imageHelper.createResourceIcon(fallbackIconFor(item))
+            val gridItem = GridItem.Builder()
+                .setTitle(item.name.orEmpty())
+                .setImage(icon, GridItem.IMAGE_TYPE_LARGE)
+                .apply {
+                    val caption = buildGridCaption(item)
+                    if (caption.isNotEmpty()) setText(caption)
+                }
+                .setOnClickListener { onItemClicked(item) }
+                .build()
+            listBuilder.addItem(gridItem)
+        }
+
+        return builder.setSingleList(listBuilder.build()).build()
+    }
+
+    private fun buildListTemplate(): Template {
         val listBuilder = ItemList.Builder()
 
         if (isLoading) {
             listBuilder.setNoItemsMessage("Lade Videos...")
-        } else if (items.isEmpty()) {
-            listBuilder.setNoItemsMessage("Keine Videos in dieser Kategorie vorhanden")
         } else {
             items.forEach { item ->
-                val title = item.name.orEmpty()
                 val subtitle = buildSubtitle(item)
                 val icon = itemIcons[item.id]
-
-                val rowBuilder = Row.Builder()
-                    .setTitle(title)
+                val row = Row.Builder()
+                    .setTitle(item.name.orEmpty())
                     .apply {
                         if (subtitle.isNotEmpty()) addText(subtitle)
                         if (icon != null) setImage(icon)
                     }
-                    .setOnClickListener {
-                        if (item.type == BaseItemKind.SERIES) {
-                            screenManager.push(
-                                CarSeriesDetailScreen(
-                                    carContext,
-                                    apiClient,
-                                    playerManager,
-                                    imageHelper,
-                                    item,
-                                )
-                            )
-                        } else if (item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV) {
-                            screenManager.push(
-                                CarVideoPlayerScreen(
-                                    carContext,
-                                    playerManager,
-                                    item,
-                                    0L,
-                                )
-                            )
-                        } else {
-                            screenManager.push(
-                                CarMediaDetailScreen(
-                                    carContext,
-                                    apiClient,
-                                    playerManager,
-                                    imageHelper,
-                                    item,
-                                )
-                            )
-                        }
-                    }
-
-                listBuilder.addItem(rowBuilder.build())
+                    .setOnClickListener { onItemClicked(item) }
+                    .build()
+                listBuilder.addItem(row)
             }
         }
 
@@ -198,6 +241,43 @@ class CarMediaListScreen(
             .setHeaderAction(Action.BACK)
             .setSingleList(listBuilder.build())
             .build()
+    }
+
+    private fun onItemClicked(item: BaseItemDto) {
+        when {
+            item.type == BaseItemKind.SERIES -> screenManager.push(
+                CarSeriesDetailScreen(carContext, apiClient, playerManager, imageHelper, item)
+            )
+            item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV -> screenManager.push(
+                CarVideoPlayerScreen(carContext, playerManager, item, 0L)
+            )
+            else -> screenManager.push(
+                CarMediaDetailScreen(carContext, apiClient, playerManager, imageHelper, item)
+            )
+        }
+    }
+
+    /** Passendes Platzhalter-/Fallback-Symbol je nach Inhaltstyp. */
+    private fun fallbackIconFor(item: BaseItemDto): Int = when {
+        item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV -> R.drawable.ic_live_tv
+        item.type == BaseItemKind.SERIES -> R.drawable.ic_tv_series
+        else -> R.drawable.ic_local_movies_white_64
+    }
+
+    /** Kurze Zusatzzeile unter dem Poster im Grid (eine Zeile, knapp gehalten). */
+    private fun buildGridCaption(item: BaseItemDto): String {
+        if (item.type == BaseItemKind.LIVE_TV_CHANNEL || listType == MediaListType.LIVE_TV) {
+            return item.currentProgram?.name.orEmpty().ifEmpty { "Live" }
+        }
+        if (item.type == BaseItemKind.EPISODE && item.parentIndexNumber != null && item.indexNumber != null) {
+            return "S${item.parentIndexNumber} · E${item.indexNumber}"
+        }
+        val runTimeMs = item.runTimeTicks?.ticks?.inWholeMilliseconds ?: 0L
+        val resumeMs = item.userData?.playbackPositionTicks?.ticks?.inWholeMilliseconds ?: 0L
+        if (resumeMs > 0L && runTimeMs > 0L) {
+            return "${((resumeMs.toDouble() / runTimeMs) * 100).toInt()}% gesehen"
+        }
+        return item.productionYear?.toString().orEmpty()
     }
 
     private fun buildSubtitle(item: BaseItemDto): String {
@@ -231,5 +311,12 @@ class CarMediaListScreen(
                 append("  ($percent% gesehen)")
             }
         }.removeSuffix("  •  ")
+    }
+
+    private companion object {
+        const val DEFAULT_CONTENT_LIMIT = 12
+        const val MAX_CONTENT_LIMIT = 50
+        const val POSTER_SIZE_PX = 300
+        const val LIST_ICON_SIZE_PX = 150
     }
 }
