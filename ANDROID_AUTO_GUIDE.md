@@ -106,18 +106,28 @@ Installiere die erstellte `jelly-car-v...-libre-debug.apk` auf deinem Smartphone
 
 **Option A: Per ADB (Empfohlen für Entwickler)**
 ```bash
-adb install -r app/build/outputs/apk/libre/debug/jelly-car-v0.0.0-dev.1-libre-debug.apk
+# APK mit simulierter Play Store Herkunft installieren:
+adb install -r -i com.android.vending app/build/outputs/apk/libre/debug/jelly-car-v0.0.0-dev.1-libre-debug.apk
+
+# Standortberechtigungen erteilen (zwingend erforderlich für CarAppService Navigation):
+adb shell pm grant org.jellyfin.mobile.debug android.permission.ACCESS_FINE_LOCATION
+adb shell pm grant org.jellyfin.mobile.debug android.permission.ACCESS_COARSE_LOCATION
 ```
 
 **Option B: Direkte APK-Installation**
 Übertrage die APK auf dein Smartphone und installiere sie mit einem Dateimanager. 
-*(Hinweis für Android 14+: Falls die App im Auto nicht direkt im Launcher auftaucht, kann ein Installer wie KingInstaller oder AAAD genutzt werden, der der App den Install-Source "com.android.vending" zuweist).*
 
-### Schritt 4: Verbindung mit dem Fahrzeug
-1. Öffne **Jelly-Car** auf deinem Smartphone und melde dich bei deinem Jellyfin-Server an.
-2. Schließe das Smartphone per USB-Kabel an das Auto an oder verbinde dich kabellos über Android Auto (oder Wireless-Adapter wie AAWireless).
-3. Öffne im Android Auto App-Menü auf deinem Fahrzeug-Display das Icon **Jelly-Car**.
-4. Wähle dein gewünschtes Video aus und genieße das Streaming!
+### Schritt 4: Launcher-Sichtbarkeit im Smartphone prüfen
+1. Öffne auf dem Smartphone **Einstellungen -> Verbundene Geräte -> Android Auto** (oder suche nach „Android Auto“).
+2. Tippe auf **Launcher anpassen**.
+3. Suche nach **Jelly-Car**. Falls die Checkbox nicht aktiv ist oder Jelly-Car unter „Ausgeblendete Apps“ steht, aktiviere die App.
+4. *(Tipp bei Problemen)*: Leere unter **Einstellungen -> Apps -> Android Auto -> Speicher und Cache** den Cache und starte das Smartphone neu.
+
+### Schritt 5: Verbindung mit dem Fahrzeug & Warum DHU vs. Auto unterschiedlich sind
+- **Desktop Head Unit (DHU-Emulator):** Im Emulator greift der Entwicklungsmodus („Head-Unit-Server“), in dem Google alle Sicherheits- und Play-Store-Herstellungschecks deaktiviert.
+- **Echtes Fahrzeug:** Bei Verbindung mit dem echten Fahrzeug prüft Android Auto die App-Signatur und den Play-Store-Status. Seit Android 14 ignoriert Google bei CarApp-Library-Diensten den Schalter „Unbekannte Quellen“ auf echten Head Units.
+  - Falls die App trotz gesetztem Haken in „Launcher anpassen“ auf Android 14+ im Auto nicht erscheint, ist der sicherste und offizielle Weg: Upload der APK/AAB in die **Google Play Console (Interne Testspur / Internes App-Sharing)** und Installation über den Play Store Link.
+  - Alternativ: Nutzung eines Wireless-Adapters wie **AAWireless** mit aktiviertem Entwicklermodus.
 
 ---
 
